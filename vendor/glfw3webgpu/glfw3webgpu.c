@@ -76,13 +76,10 @@ WGPUSurface glfwGetWGPUSurface(WGPUInstance instance, GLFWwindow* window) {
             instance,
             &(WGPUSurfaceDescriptor){
             .label = NULL,
-                .nextInChain =
-                (const WGPUChainedStruct*)&(
-                    WGPUSurfaceDescriptorFromMetalLayer) {
-                .chain =
-                    (WGPUChainedStruct){
-                        .next = NULL,
-                        .sType = WGPUSType_SurfaceDescriptorFromMetalLayer,
+            .nextInChain = (const WGPUChainedStruct*) &(WGPUSurfaceDescriptorFromMetalLayer) {
+                .chain = (WGPUChainedStruct) {
+                    .next = NULL,
+                    .sType = WGPUSType_SurfaceDescriptorFromMetalLayer,
                 },
                 .layer = metal_layer,
             },
