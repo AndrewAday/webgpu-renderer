@@ -63,6 +63,9 @@ endif()
 if (MSVC)
 	# Disable warning C4201: nonstandard extension used: nameless struct/union
 	target_compile_options(${CMAKE_PROJECT_NAME} PUBLIC /wd4201)
+    # Set the startup project to be the actual project instead of ALL_BUILD 
+    set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${CMAKE_PROJECT_NAME})
+
 endif (MSVC)
 
 # print which backend is being used

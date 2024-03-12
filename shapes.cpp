@@ -129,14 +129,14 @@ Vertices createPlane(PlaneParams params)
             const f32 x = ix * segment_width - width_half;
 
             vert = {
-                .x  = x,
-                .y  = -y,
-                .z  = 0,
-                .nx = 0,
-                .ny = 0,
-                .nz = 1,
-                .u  = (f32)ix / gridX,
-                .v  = 1.0f - ((f32)iy / gridY),
+                x,  // x
+                -y, // y
+                0,  // z
+                0,  // nx
+                0,  // ny
+                1,  // nz
+                (f32)ix / gridX, // u
+                1.0f - ((f32)iy / gridY),  // v
             };
 
             Vertices::addVertex(&vertices, vert, index++);

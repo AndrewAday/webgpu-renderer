@@ -202,7 +202,7 @@ bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
     ASSERT(context->depthTexture != NULL);
 
     // Create the view of the depth texture manipulated by the rasterizer
-    WGPUTextureViewDescriptor depthTextureViewDesc;
+    WGPUTextureViewDescriptor depthTextureViewDesc = {};
     depthTextureViewDesc.format          = depthTextureFormat;
     depthTextureViewDesc.dimension       = WGPUTextureViewDimension_2D;
     depthTextureViewDesc.baseMipLevel    = 0;

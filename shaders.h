@@ -84,15 +84,16 @@ static const char* shaderCode = CODE(
         out.v_normal = in.normal;
         out.v_uv     = in.uv;
 
-        // out.position = worldPos;
-        // TODO: implemente matrices
-        out.position = vec4f(in.position, 0.5 + 0.5 * sin(u_Frame.time));
+        out.position = worldPos;
+        // out.position = vec4f(in.position, 0.5 + 0.5 * sin(u_Frame.time));
         return out;
     }
 
     @fragment fn fs_main(in : VertexOutput)->@location(0) vec4f
     {
-        return vec4f(in.v_uv, 0.5 + 0.5 * sin(u_Frame.time), 1.0);
+        var color : vec4f = u_Material.color;
+        color.g = 0.5 + 0.5 * sin(u_Frame.time);
+        return color;
     }
 );
 

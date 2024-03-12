@@ -11,10 +11,17 @@
 #ifndef GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #endif
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include <glm/glm.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
+#include <glm/gtx/quaternion.hpp> // quatToMat4
+#include <glm/gtx/string_cast.hpp>
 
 #include "common.h"
 #include "context.h"
+#include "entity.h"
 #include "shaders.h"
 #include "shapes.h"
 
@@ -58,11 +65,49 @@ int main(int, char**)
     Vertices vertices       = createPlane(planeParams);
     Vertices::print(&vertices);
 
+    // Create entities to render
+    Entity planeEntity = {};
+    Entity::init(&planeEntity);
+    Entity cameraEntity = {};
+    Entity::init(&cameraEntity);
+    cameraEntity.pos = glm::vec3(0.0, 0.0, 6.0); // move camera back
+
     // Initialize GLFW
     glfwInit();
     if (!glfwInit()) {
         std::cerr << "Could not initialize GLFW!" << std::endl;
         return 1;
+    }
+
+    // print glm version
+    std::cout << "GLM version: " << GLM_VERSION_MAJOR << "."
+              << GLM_VERSION_MINOR << "." << GLM_VERSION_PATCH << "."
+              << GLM_VERSION_REVISION << std::endl;
+
+    { // test glm matrix decompose
+        std::cout << "45deg z axis Quat: "
+                  << glm::to_string(
+                       glm::quat(glm::radians(glm::vec3(0.0f, 0.0f, 55.0f))))
+                  << std::endl;
+
+        auto position = glm::vec3(4.0f, 0.0f, 0.0f);
+        auto rotationQuat
+          = glm::quat(glm::radians(glm::vec3(0.0f, 0.0f, 55.0f)));
+        auto matrix = glm::mat4x4(1.0f);
+        matrix      = glm::translate(matrix, position);
+        matrix *= glm::toMat4(rotationQuat);
+        matrix = glm::scale(matrix, glm::vec3(1.0f));
+
+        glm::vec3 decomposedScale;
+        glm::vec3 decomposedPosition;
+        glm::quat decomposedRotationQuat(1.0, 0.0, 0.0, 0.0);
+        glm::vec3 skewUnused;
+        glm::vec4 perspectiveUnused;
+        glm::decompose(matrix, decomposedScale, decomposedRotationQuat,
+                       decomposedPosition, skewUnused, perspectiveUnused);
+        std::cout << "Decomposed Position: "
+                  << glm::to_string(decomposedPosition) << "\nDecomposed Quat: "
+                  << glm::to_string(decomposedRotationQuat) << std::endl;
     }
 
     // Create the window
@@ -103,6 +148,9 @@ int main(int, char**)
         WGPURenderPassEncoder renderPass
           = GraphicsContext::prepareFrame(&g_ctx);
 
+        Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
+                                  0.01f);
+
         { // draw
             wgpuRenderPassEncoderSetPipeline(renderPass, pipeline.pipeline);
 
@@ -130,13 +178,33 @@ int main(int, char**)
             // wgpuRenderPassEncoderDraw(renderPass,
             // ARRAY_LENGTH(vertexPositions) / 2, 1, 0, 0);
 
-            // update uniforms
+            // frame uniforms
             f32 time                    = (f32)glfwGetTime();
             FrameUniforms frameUniforms = {};
-            frameUniforms.time          = time;
+            frameUniforms.projectionMat
+              = Entity::projectionMatrix(&cameraEntity);
+            frameUniforms.viewMat = Entity::viewMatrix(&cameraEntity);
+            frameUniforms.projViewMat
+              = frameUniforms.projectionMat * frameUniforms.viewMat;
+            frameUniforms.time = time;
             wgpuQueueWriteBuffer(
               g_ctx.queue, pipeline.bindGroups[PER_FRAME_GROUP].uniformBuffer,
               0, &frameUniforms, sizeof(frameUniforms));
+
+            // material uniforms
+            MaterialUniforms materialUniforms = {};
+            materialUniforms.color            = glm::vec4(1.0, 0.0, 0.0, 1.0);
+            wgpuQueueWriteBuffer(
+              g_ctx.queue,
+              pipeline.bindGroups[PER_MATERIAL_GROUP].uniformBuffer, 0,
+              &materialUniforms, sizeof(materialUniforms));
+
+            // model uniforms
+            DrawUniforms drawUniforms = {};
+            drawUniforms.modelMat     = Entity::modelMatrix(&planeEntity);
+            wgpuQueueWriteBuffer(
+              g_ctx.queue, pipeline.bindGroups[PER_DRAW_GROUP].uniformBuffer, 0,
+              &drawUniforms, sizeof(drawUniforms));
 
             // set bind groups
             for (u32 i = 0; i < ARRAY_LENGTH(pipeline.bindGroups); i++) {
