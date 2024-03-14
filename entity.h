@@ -5,7 +5,15 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#define IDENTITY_ROT (glm::quat(1.0, 0.0, 0.0, 0.0))
+#define QUAT_IDENTITY (glm::quat(1.0, 0.0, 0.0, 0.0))
+#define MAT_IDENTITY (glm::mat4(1.0))
+
+#define VEC_UP (glm::vec3(0.0f, 1.0f, 0.0f))
+#define VEC_DOWN (glm::vec3(0.0f, -1.0f, 0.0f))
+#define VEC_LEFT (glm::vec3(-1.0f, 0.0f, 0.0f))
+#define VEC_RIGHT (glm::vec3(1.0f, 0.0f, 0.0f))
+#define VEC_FORWARD (glm::vec3(0.0f, 0.0f, -1.0f))
+#define VEC_BACKWARD (glm::vec3(0.0f, 0.0f, 1.0f))
 
 enum EntityType {
     ENTITY_TYPE_NONE = 0,

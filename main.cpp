@@ -15,9 +15,10 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #endif
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp> // quatToMat4
-#include <glm/gtx/string_cast.hpp>
+// #include <glm/gtx/string_cast.hpp>
 
 #include "common.h"
 #include "context.h"
@@ -29,6 +30,30 @@
 // #define WEBGPU_BACKEND_DAWN
 // #define WEBGPU_BACKEND_WGPU
 // #define WEBGPU_BACKEND_EMSCRIPTEN
+
+static Entity cameraEntity = {};
+
+struct Spherical {
+    f32 radius;
+    f32 theta; // polar (radians)
+    f32 phi;   // azimuth (radians)
+
+    // Left handed system
+    // (1, 0, 0) maps to cartesion coordinate (0, 0, 1)
+    static glm::vec3 toCartesian(Spherical s)
+    {
+        f32 v = s.radius * cos(s.phi);
+        return glm::vec3(v * sin(s.theta),      // x
+                         s.radius * sin(s.phi), // y
+                         v * cos(s.theta)       // z
+        );
+    }
+};
+
+Spherical cameraSpherical = { 6.0f, 0.0f, 0.0f };
+bool mouseDown            = false;
+f64 mouseX                = 0.0;
+f64 mouseY                = 0.0;
 
 static void showFPS(GLFWwindow* window)
 {
@@ -58,6 +83,50 @@ static void showFPS(GLFWwindow* window)
 #undef WINDOW_TITLE_MAX_LENGTH
 }
 
+static void mouseButtonCallback(GLFWwindow* window, int button, int action,
+                                int mods)
+{
+    UNUSED_VAR(mods);
+    UNUSED_VAR(window);
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+        // double xpos, ypos;
+        // glfwGetCursorPos(window, &xpos, &ypos);
+        mouseDown = true;
+        std::cout << "Mouse down" << std::endl;
+    } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+        mouseDown = false;
+        std::cout << "Mouse released" << std::endl;
+    }
+}
+
+static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    UNUSED_VAR(window);
+    std::cout << "Scroll: " << xoffset << ", " << yoffset << std::endl;
+    // yoffset changes the orbit camera radius
+    cameraSpherical.radius -= yoffset;
+}
+
+static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    UNUSED_VAR(window);
+    UNUSED_VAR(xpos);
+    UNUSED_VAR(ypos);
+
+    f64 deltaX = xpos - mouseX;
+    f64 deltaY = ypos - mouseY;
+
+    const f64 speed = 0.02;
+
+    if (mouseDown) {
+        cameraSpherical.theta -= (speed * deltaX);
+        cameraSpherical.phi -= (speed * deltaY);
+    }
+
+    mouseX = xpos;
+    mouseY = ypos;
+}
+
 int main(int, char**)
 {
     // test printing plane
@@ -68,7 +137,6 @@ int main(int, char**)
     // Create entities to render
     Entity planeEntity = {};
     Entity::init(&planeEntity);
-    Entity cameraEntity = {};
     Entity::init(&cameraEntity);
     cameraEntity.pos = glm::vec3(0.0, 0.0, 6.0); // move camera back
 
@@ -84,32 +152,6 @@ int main(int, char**)
               << GLM_VERSION_MINOR << "." << GLM_VERSION_PATCH << "."
               << GLM_VERSION_REVISION << std::endl;
 
-    { // test glm matrix decompose
-        std::cout << "45deg z axis Quat: "
-                  << glm::to_string(
-                       glm::quat(glm::radians(glm::vec3(0.0f, 0.0f, 55.0f))))
-                  << std::endl;
-
-        auto position = glm::vec3(4.0f, 0.0f, 0.0f);
-        auto rotationQuat
-          = glm::quat(glm::radians(glm::vec3(0.0f, 0.0f, 55.0f)));
-        auto matrix = glm::mat4x4(1.0f);
-        matrix      = glm::translate(matrix, position);
-        matrix *= glm::toMat4(rotationQuat);
-        matrix = glm::scale(matrix, glm::vec3(1.0f));
-
-        glm::vec3 decomposedScale;
-        glm::vec3 decomposedPosition;
-        glm::quat decomposedRotationQuat(1.0, 0.0, 0.0, 0.0);
-        glm::vec3 skewUnused;
-        glm::vec4 perspectiveUnused;
-        glm::decompose(matrix, decomposedScale, decomposedRotationQuat,
-                       decomposedPosition, skewUnused, perspectiveUnused);
-        std::cout << "Decomposed Position: "
-                  << glm::to_string(decomposedPosition) << "\nDecomposed Quat: "
-                  << glm::to_string(decomposedRotationQuat) << std::endl;
-    }
-
     // Create the window
     glfwWindowHint(GLFW_CLIENT_API,
                    GLFW_NO_API); // don't create an OpenGL context
@@ -121,6 +163,12 @@ int main(int, char**)
         std::cerr << "Could not open window!" << std::endl;
         glfwTerminate();
         return EXIT_FAILURE;
+    }
+
+    { // set mouse callbacks
+        glfwSetMouseButtonCallback(window, mouseButtonCallback);
+        glfwSetScrollCallback(window, scrollCallback);
+        glfwSetCursorPosCallback(window, cursorPositionCallback);
     }
 
     GraphicsContext g_ctx = {};
@@ -148,8 +196,8 @@ int main(int, char**)
         WGPURenderPassEncoder renderPass
           = GraphicsContext::prepareFrame(&g_ctx);
 
-        Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
-                                  0.01f);
+        // Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
+        //                           0.01f);
 
         { // draw
             wgpuRenderPassEncoderSetPipeline(renderPass, pipeline.pipeline);
@@ -179,6 +227,25 @@ int main(int, char**)
             // ARRAY_LENGTH(vertexPositions) / 2, 1, 0, 0);
 
             // frame uniforms
+
+            // update camera transform from spherical coordinates
+            {
+                cameraEntity.pos = Spherical::toCartesian(cameraSpherical);
+
+                // std::cout << "Camera Pos: " << cameraEntity.pos.x << ", "
+                //           << cameraEntity.pos.y << ", " << cameraEntity.pos.z
+                //           << std::endl;
+
+                // camera lookat origin
+                cameraEntity.rot = glm::conjugate(glm::toQuat(
+                  glm::lookAt(cameraEntity.pos, glm::vec3(0), VEC_UP)));
+
+                // glm::vec3 rotEuler = glm::eulerAngles(cameraEntity.rot);
+                // std::cout << "Camera rot:" << rotEuler.x << ", " <<
+                // rotEuler.y
+                //           << ", " << rotEuler.z << std::endl;
+            }
+
             f32 time                    = (f32)glfwGetTime();
             FrameUniforms frameUniforms = {};
             frameUniforms.projectionMat
@@ -186,7 +253,8 @@ int main(int, char**)
             frameUniforms.viewMat = Entity::viewMatrix(&cameraEntity);
             frameUniforms.projViewMat
               = frameUniforms.projectionMat * frameUniforms.viewMat;
-            frameUniforms.time = time;
+            frameUniforms.dirLight = VEC_FORWARD;
+            frameUniforms.time     = time;
             wgpuQueueWriteBuffer(
               g_ctx.queue, pipeline.bindGroups[PER_FRAME_GROUP].uniformBuffer,
               0, &frameUniforms, sizeof(frameUniforms));

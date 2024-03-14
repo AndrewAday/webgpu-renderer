@@ -18,8 +18,8 @@ struct FrameUniforms {
     glm::mat4x4 projectionMat; // at byte offset 0
     glm::mat4x4 viewMat;       // at byte offset 64
     glm::mat4x4 projViewMat;   // at byte offset 128
-    float time;                // at byte offset 192
-    float _pad0[3];
+    glm::vec3 dirLight;        // at byte offset 192
+    float time;                // at byte offset 204
 };
 
 struct MaterialUniforms {
@@ -36,6 +36,10 @@ static const char* shaderCode = CODE(
         projectionMat: mat4x4f,
         viewMat: mat4x4f,
         projViewMat: mat4x4f,
+
+        // lighting
+        dirLight: vec3f,
+
         time: f32,
     };
 
@@ -81,7 +85,7 @@ static const char* shaderCode = CODE(
 
         var worldPos : vec4f = u_Frame.projViewMat * u_Draw.modelMat * vec4f(in.position, 1.0f);
         out.v_worldPos = worldPos.xyz;
-        out.v_normal = in.normal;
+        out.v_normal = (u_Draw.modelMat * vec4f(in.normal, 0.0)).xyz;
         out.v_uv     = in.uv;
 
         out.position = worldPos;
@@ -91,9 +95,14 @@ static const char* shaderCode = CODE(
 
     @fragment fn fs_main(in : VertexOutput)->@location(0) vec4f
     {
+        // base color
         var color : vec4f = u_Material.color;
         color.g = 0.5 + 0.5 * sin(u_Frame.time);
-        return color;
+        // lambertian diffuse
+        let normal = normalize(in.v_normal);
+        let lightContrib = max(0.0, dot(u_Frame.dirLight, -normal));
+
+        return lightContrib * color;
     }
 );
 
