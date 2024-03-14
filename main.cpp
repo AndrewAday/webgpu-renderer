@@ -20,6 +20,9 @@
 #include <glm/gtx/quaternion.hpp> // quatToMat4
 // #include <glm/gtx/string_cast.hpp>
 
+#define CGLTF_IMPLEMENTATION
+#include <cgltf/cgltf.h>
+
 #include "common.h"
 #include "context.h"
 #include "entity.h"
@@ -49,6 +52,11 @@ struct Spherical {
         );
     }
 };
+
+// arc camera impl with velocity / dampening
+// https://webgpu.github.io/webgpu-samples/?sample=cameras#camera.ts
+// Original Arcball camera paper?
+// https://www.talisman.org/~erlkonig/misc/shoemake92-arcball.pdf
 
 Spherical cameraSpherical = { 6.0f, 0.0f, 0.0f };
 bool mouseDown            = false;
@@ -196,8 +204,8 @@ int main(int, char**)
         WGPURenderPassEncoder renderPass
           = GraphicsContext::prepareFrame(&g_ctx);
 
-        // Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
-        //                           0.01f);
+        Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
+                                  0.01f);
 
         { // draw
             wgpuRenderPassEncoderSetPipeline(renderPass, pipeline.pipeline);

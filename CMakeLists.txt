@@ -81,7 +81,9 @@ FetchContent_MakeAvailable(webgpu)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE glfw webgpu glfw3webgpu)
 
 # add vendor to include path
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE .)
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE vendor)
+target_include_directories(${CMAKE_PROJECT_NAME} 
+    PRIVATE .
+    PRIVATE vendor
+)
 
 target_copy_webgpu_binaries(${CMAKE_PROJECT_NAME})
