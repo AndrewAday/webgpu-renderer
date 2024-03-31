@@ -137,9 +137,13 @@ static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
 
 int main(int, char**)
 {
-    // test printing plane
-    PlaneParams planeParams = { 1.0f, 1.0f, 1, 1 };
-    Vertices vertices       = createPlane(planeParams);
+    // test plane
+    // PlaneParams planeParams = { 1.0f, 1.0f, 1, 1 };
+    // Vertices vertices       = createPlane(&planeParams);
+
+    // test cube
+    CubeParams cubeParams = { 1.0f, 1.0f, 1.0f, 1, 1, 1 };
+    Vertices vertices     = createCube(&cubeParams);
     Vertices::print(&vertices);
 
     // Create entities to render
@@ -185,12 +189,12 @@ int main(int, char**)
     // Create vertex buffer
     VertexBuffer vertexBuffer = {};
     VertexBuffer::init(&g_ctx, &vertexBuffer, 8 * vertices.vertexCount,
-                       vertices.vertexData, "position");
+                       vertices.vertexData, "vertices");
 
     // create index buffer
     IndexBuffer indexBuffer = {};
     IndexBuffer::init(&g_ctx, &indexBuffer, vertices.indicesCount,
-                      vertices.indices, "index");
+                      vertices.indices, "indices");
 
     RenderPipeline pipeline = {};
     RenderPipeline::init(&g_ctx, &pipeline, shaderCode, shaderCode);
