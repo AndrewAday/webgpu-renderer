@@ -23,6 +23,9 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf/cgltf.h>
 
+#define FAST_OBJ_IMPLEMENTATION
+#include <fast_obj/fast_obj.h>
+
 #include "common.h"
 #include "context.h"
 #include "entity.h"
@@ -135,20 +138,19 @@ static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
     mouseY = ypos;
 }
 
+std::vector<Entity> renderables;
+
 int main(int, char**)
 {
     // test plane
-    // PlaneParams planeParams = { 1.0f, 1.0f, 1, 1 };
-    // Vertices vertices       = createPlane(&planeParams);
+    PlaneParams planeParams = { 1.0f, 1.0f, 1, 1 };
+    Vertices planeVertices  = createPlane(&planeParams);
 
     // test cube
-    CubeParams cubeParams = { 1.0f, 1.0f, 1.0f, 1, 1, 1 };
-    Vertices vertices     = createCube(&cubeParams);
-    Vertices::print(&vertices);
+    // CubeParams cubeParams = { 1.0f, 1.0f, 1.0f, 1, 1, 1 };
+    // Vertices vertices     = createCube(&cubeParams);
+    // Vertices::print(&vertices);
 
-    // Create entities to render
-    Entity planeEntity = {};
-    Entity::init(&planeEntity);
     Entity::init(&cameraEntity);
     cameraEntity.pos = glm::vec3(0.0, 0.0, 6.0); // move camera back
 
@@ -186,15 +188,68 @@ int main(int, char**)
     GraphicsContext g_ctx = {};
     GraphicsContext::init(&g_ctx, window);
 
-    // Create vertex buffer
-    VertexBuffer vertexBuffer = {};
-    VertexBuffer::init(&g_ctx, &vertexBuffer, 8 * vertices.vertexCount,
-                       vertices.vertexData, "vertices");
+    // Create entities to render
+    Entity planeEntity = {};
+    Entity::init(&planeEntity);
+    Entity::setVertices(&planeEntity, &planeVertices, &g_ctx);
+    renderables.push_back(planeEntity);
 
-    // create index buffer
-    IndexBuffer indexBuffer = {};
-    IndexBuffer::init(&g_ctx, &indexBuffer, vertices.indicesCount,
-                      vertices.indices, "indices");
+    Entity objEntity = {};
+    Entity::init(&objEntity);
+    {
+        fastObjMesh* mesh = fast_obj_read("assets/suzanne.obj");
+        // print mesh data
+        printf(
+          "Loaded mesh\n"
+          "  %d positions\n"
+          "  %d texcoords\n"
+          "  %d normals\n"
+          "  %d colors\n"
+          "  %d faces\n"
+          "  %d indices\n",
+          mesh->position_count, mesh->texcoord_count, mesh->normal_count,
+          mesh->color_count, mesh->face_count, mesh->index_count);
+
+        // convert from fast_obj_mesh to Vertices
+        Vertex v          = {};
+        Vertices vertices = {};
+        Vertices::init(&vertices, mesh->index_count, mesh->index_count);
+        for (u32 i = 0; i < mesh->index_count; i++) {
+            fastObjIndex index = mesh->indices[i];
+
+            v = {
+                mesh->positions[index.p * 3 + 0],
+                mesh->positions[index.p * 3 + 1],
+                mesh->positions[index.p * 3 + 2],
+                mesh->normals[index.n * 3 + 0],
+                mesh->normals[index.n * 3 + 1],
+                mesh->normals[index.n * 3 + 2],
+                mesh->texcoords[index.t * 2 + 0],
+                mesh->texcoords[index.t * 2 + 1],
+            };
+
+            Vertices::setVertex(&vertices, v, i);
+        }
+        // make everything indexed draw for now
+        for (u32 i = 0; i < vertices.indicesCount; i++) {
+            vertices.indices[i] = i;
+        }
+
+        fast_obj_destroy(mesh);
+
+        Entity::setVertices(&objEntity, &vertices, &g_ctx);
+        renderables.push_back(objEntity);
+    }
+
+    // // Create vertex buffer
+    // VertexBuffer vertexBuffer = {};
+    // VertexBuffer::init(&g_ctx, &vertexBuffer, 8 * vertices.vertexCount,
+    //                    vertices.vertexData, "vertices");
+
+    // // create index buffer
+    // IndexBuffer indexBuffer = {};
+    // IndexBuffer::init(&g_ctx, &indexBuffer, vertices.indicesCount,
+    //                   vertices.indices, "indices");
 
     RenderPipeline pipeline = {};
     RenderPipeline::init(&g_ctx, &pipeline, shaderCode, shaderCode);
@@ -214,27 +269,31 @@ int main(int, char**)
         { // draw
             wgpuRenderPassEncoderSetPipeline(renderPass, pipeline.pipeline);
 
+            // TODO: loop over renderables and draw
+
             { // set vertex attributes
                 wgpuRenderPassEncoderSetVertexBuffer(
-                  renderPass, 0, vertexBuffer.buf, 0,
-                  sizeof(f32) * vertices.vertexCount * 3);
+                  renderPass, 0, objEntity.gpuVertices.buf, 0,
+                  sizeof(f32) * objEntity.vertices.vertexCount * 3);
 
-                auto normalsOffset = sizeof(f32) * vertices.vertexCount * 3;
-
-                wgpuRenderPassEncoderSetVertexBuffer(
-                  renderPass, 1, vertexBuffer.buf, normalsOffset,
-                  sizeof(f32) * vertices.vertexCount * 3);
-
-                auto texcoordsOffset = sizeof(f32) * vertices.vertexCount * 6;
+                auto normalsOffset
+                  = sizeof(f32) * objEntity.vertices.vertexCount * 3;
 
                 wgpuRenderPassEncoderSetVertexBuffer(
-                  renderPass, 2, vertexBuffer.buf, texcoordsOffset,
-                  sizeof(f32) * vertices.vertexCount * 2);
+                  renderPass, 1, objEntity.gpuVertices.buf, normalsOffset,
+                  sizeof(f32) * objEntity.vertices.vertexCount * 3);
+
+                auto texcoordsOffset
+                  = sizeof(f32) * objEntity.vertices.vertexCount * 6;
+
+                wgpuRenderPassEncoderSetVertexBuffer(
+                  renderPass, 2, objEntity.gpuVertices.buf, texcoordsOffset,
+                  sizeof(f32) * objEntity.vertices.vertexCount * 2);
             }
 
-            wgpuRenderPassEncoderSetIndexBuffer(renderPass, indexBuffer.buf,
-                                                WGPUIndexFormat_Uint32, 0,
-                                                indexBuffer.desc.size);
+            wgpuRenderPassEncoderSetIndexBuffer(
+              renderPass, objEntity.gpuIndices.buf, WGPUIndexFormat_Uint32, 0,
+              objEntity.gpuIndices.desc.size);
             // wgpuRenderPassEncoderDraw(renderPass,
             // ARRAY_LENGTH(vertexPositions) / 2, 1, 0, 0);
 
@@ -243,19 +302,9 @@ int main(int, char**)
             // update camera transform from spherical coordinates
             {
                 cameraEntity.pos = Spherical::toCartesian(cameraSpherical);
-
-                // std::cout << "Camera Pos: " << cameraEntity.pos.x << ", "
-                //           << cameraEntity.pos.y << ", " << cameraEntity.pos.z
-                //           << std::endl;
-
                 // camera lookat origin
                 cameraEntity.rot = glm::conjugate(glm::toQuat(
                   glm::lookAt(cameraEntity.pos, glm::vec3(0), VEC_UP)));
-
-                // glm::vec3 rotEuler = glm::eulerAngles(cameraEntity.rot);
-                // std::cout << "Camera rot:" << rotEuler.x << ", " <<
-                // rotEuler.y
-                //           << ", " << rotEuler.z << std::endl;
             }
 
             f32 time                    = (f32)glfwGetTime();
@@ -281,7 +330,7 @@ int main(int, char**)
 
             // model uniforms
             DrawUniforms drawUniforms = {};
-            drawUniforms.modelMat     = Entity::modelMatrix(&planeEntity);
+            drawUniforms.modelMat     = Entity::modelMatrix(&objEntity);
             wgpuQueueWriteBuffer(
               g_ctx.queue, pipeline.bindGroups[PER_DRAW_GROUP].uniformBuffer, 0,
               &drawUniforms, sizeof(drawUniforms));
@@ -292,9 +341,13 @@ int main(int, char**)
                   renderPass, i, pipeline.bindGroups[i].bindGroup, 0, NULL);
             }
 
-            // draw call
-            wgpuRenderPassEncoderDrawIndexed(renderPass, vertices.indicesCount,
-                                             1, 0, 0, 0);
+            // draw call (indexed)
+            wgpuRenderPassEncoderDrawIndexed(
+              renderPass, objEntity.vertices.indicesCount, 1, 0, 0, 0);
+            // draw call (nonindexed)
+            // wgpuRenderPassEncoderDraw(renderPass,
+            //                           objEntity.vertices.vertexCount, 1, 0,
+            //                           0);
         }
 
         GraphicsContext::presentFrame(&g_ctx);

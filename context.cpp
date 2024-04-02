@@ -193,17 +193,15 @@ bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
     depthTextureDesc.dimension = WGPUTextureDimension_2D;
     depthTextureDesc.size      = { (u32)window_width, (u32)window_height, 1 };
     depthTextureDesc.format    = depthTextureFormat;
-    depthTextureDesc.mipLevelCount   = 1;
-    depthTextureDesc.sampleCount     = 1;
-    depthTextureDesc.viewFormatCount = 1;
-    depthTextureDesc.viewFormats     = &depthTextureFormat;
+    depthTextureDesc.mipLevelCount = 1;
+    depthTextureDesc.sampleCount   = 1;
     context->depthTexture
       = wgpuDeviceCreateTexture(context->device, &depthTextureDesc);
     ASSERT(context->depthTexture != NULL);
 
     // Create the view of the depth texture manipulated by the rasterizer
     WGPUTextureViewDescriptor depthTextureViewDesc = {};
-    depthTextureViewDesc.format          = depthTextureFormat;
+    depthTextureViewDesc.format                    = depthTextureFormat;
     depthTextureViewDesc.dimension       = WGPUTextureViewDimension_2D;
     depthTextureViewDesc.baseMipLevel    = 0;
     depthTextureViewDesc.mipLevelCount   = 1;
@@ -221,7 +219,6 @@ bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
     context->colorAttachment.clearValue = WGPUColor{ 0.0f, 0.0f, 0.0f, 1.0f };
 
     // defaults for render pass depth/stencil attachment
-
     context->depthStencilAttachment.view = context->depthTextureView;
     // The initial value of the depth buffer, meaning "far"
     context->depthStencilAttachment.depthClearValue = 1.0f;
@@ -230,6 +227,7 @@ bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
     context->depthStencilAttachment.depthStoreOp = WGPUStoreOp_Store;
     // we could turn off writing to the depth buffer globally here
     context->depthStencilAttachment.depthReadOnly = false;
+
     // Stencil setup, mandatory but unused
     context->depthStencilAttachment.stencilClearValue = 0;
 #ifdef WEBGPU_BACKEND_WGPU
@@ -614,4 +612,49 @@ void RenderPipeline::init(GraphicsContext* ctx, RenderPipeline* pipeline,
 void RenderPipeline::release(RenderPipeline* pipeline)
 {
     wgpuRenderPipelineRelease(pipeline->pipeline);
+}
+
+// ============================================================================
+// Depth Texture
+// ============================================================================
+
+void DepthTexture::init(GraphicsContext* ctx, DepthTexture* depthTexture,
+                        WGPUTextureFormat format)
+{
+    // save format
+    depthTexture->format = format;
+
+    // Create the depth texture
+    WGPUTextureDescriptor depthTextureDesc = {};
+    depthTextureDesc.dimension             = WGPUTextureDimension_2D;
+    depthTextureDesc.format                = format;
+    depthTextureDesc.mipLevelCount         = 1;
+    depthTextureDesc.sampleCount           = 1;
+    // TODO: get size from GraphicsContext
+    depthTextureDesc.size = { 640, 480, 1 };
+    // also usage WGPUTextureUsage_Binding?
+    depthTextureDesc.usage = WGPUTextureUsage_RenderAttachment;
+    depthTexture->texture
+      = wgpuDeviceCreateTexture(ctx->device, &depthTextureDesc);
+
+    // Create the view of the depth texture manipulated by the rasterizer
+    WGPUTextureViewDescriptor depthTextureViewDesc{};
+    depthTextureViewDesc.label           = "Depth Texture View";
+    depthTextureViewDesc.format          = format;
+    depthTextureViewDesc.dimension       = WGPUTextureViewDimension_2D;
+    depthTextureViewDesc.baseMipLevel    = 0;
+    depthTextureViewDesc.mipLevelCount   = 1;
+    depthTextureViewDesc.baseArrayLayer  = 0;
+    depthTextureViewDesc.arrayLayerCount = 1;
+    depthTextureViewDesc.aspect          = WGPUTextureAspect_All;
+
+    depthTexture->view
+      = wgpuTextureCreateView(depthTexture->texture, &depthTextureViewDesc);
+}
+
+void DepthTexture::release(DepthTexture* depthTexture)
+{
+    wgpuTextureViewRelease(depthTexture->view);
+    wgpuTextureDestroy(depthTexture->texture);
+    wgpuTextureRelease(depthTexture->texture);
 }

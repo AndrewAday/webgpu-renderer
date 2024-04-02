@@ -88,6 +88,9 @@ static const char* shaderCode = CODE(
         out.v_normal = (u_Draw.modelMat * vec4f(in.normal, 0.0)).xyz;
         out.v_uv     = in.uv;
 
+        // debug clamp z to range [0, 1]
+        // worldPos.z = worldPos.z * 0.5 + 0.5;
+
         out.position = worldPos;
         // out.position = vec4f(in.position, 0.5 + 0.5 * sin(u_Frame.time));
         return out;
@@ -100,9 +103,13 @@ static const char* shaderCode = CODE(
         color.g = 0.5 + 0.5 * sin(u_Frame.time);
         // lambertian diffuse
         let normal = normalize(in.v_normal);
-        let lightContrib = max(0.0, dot(u_Frame.dirLight, -normal));
+        var lightContrib : f32 = max(0.0, dot(u_Frame.dirLight, -normal));
+        // add global ambient
+        lightContrib = clamp(lightContrib, 0.2, 1.0);
 
-        return lightContrib * color;
+        return vec4f(color.rgb * lightContrib, color.a);
+        // return vec4f(in.v_normal, 1.0);
+        // return vec4f(in.v_uv, 0.0, 1.0);
     }
 );
 

@@ -38,8 +38,8 @@ void Vertices::init(Vertices* v, u32 vertexCount, u32 indicesCount)
 
     v->vertexCount  = vertexCount;
     v->indicesCount = indicesCount;
-    v->vertexData   = ALLOCATE_COUNT(f32, vertexCount * 8);
-    v->indices      = ALLOCATE_COUNT(u32, indicesCount);
+    if (vertexCount > 0) v->vertexData = ALLOCATE_COUNT(f32, vertexCount * 8);
+    if (indicesCount > 0) v->indices = ALLOCATE_COUNT(u32, indicesCount);
 }
 
 void Vertices::print(Vertices* v)

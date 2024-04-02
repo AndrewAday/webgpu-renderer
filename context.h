@@ -21,7 +21,7 @@
 // ============================================================================
 // Context
 // =========================================================================================
-// TODO request device feature limits
+// TODO request maximum device feature limits
 struct GraphicsContext {
     void* base; //
     // WebGPU API objects --------
@@ -48,6 +48,7 @@ struct GraphicsContext {
     // Window and surface --------
     WGPUSurface surface;
 
+    // Methods --------
     static bool init(GraphicsContext* context, GLFWwindow* window);
     static WGPURenderPassEncoder prepareFrame(GraphicsContext* ctx);
     static void presentFrame(GraphicsContext* ctx);
@@ -148,4 +149,19 @@ struct RenderPipeline {
                      const char* fragmentShaderCode);
 
     static void release(RenderPipeline* pipeline);
+};
+
+// ============================================================================
+// Depth Texture
+// ============================================================================
+
+struct DepthTexture {
+    WGPUTexture texture;
+    WGPUTextureView view;
+    WGPUTextureFormat format;
+
+    static void init(GraphicsContext* ctx, DepthTexture* depthTexture,
+                     WGPUTextureFormat format);
+
+    static void release(DepthTexture* depthTexture);
 };

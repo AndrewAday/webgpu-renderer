@@ -1,4 +1,5 @@
 #include "entity.h"
+#include "context.h"
 
 #include <glm/gtx/quaternion.hpp> // quatToMat4
 
@@ -16,6 +17,21 @@ void Entity::init(Entity* entity)
     entity->aspect     = 1.0f; // TODO get from window in g_ctx
     entity->nearPlane  = 0.1f;
     entity->farPlane   = 1000.0f;
+}
+
+// assigns vertices to entity and builds gpu buffers
+// immutable: once assigned, vertices cannot be changed
+void Entity::setVertices(Entity* entity, Vertices* vertices,
+                         GraphicsContext* ctx)
+{
+    ASSERT(entity->vertices.vertexData == NULL);
+    entity->vertices = *vertices; // points to same memory
+
+    // build gpu buffers
+    VertexBuffer::init(ctx, &entity->gpuVertices, 8 * vertices->vertexCount,
+                       vertices->vertexData, "vertices");
+    IndexBuffer::init(ctx, &entity->gpuIndices, vertices->indicesCount,
+                      vertices->indices, "indices");
 }
 
 glm::mat4 Entity::modelMatrix(Entity* entity)

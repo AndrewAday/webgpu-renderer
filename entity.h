@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "context.h"
 #include "shapes.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -35,12 +36,19 @@ struct Entity {
     f32 nearPlane;
     f32 farPlane;
 
-    // geometry
+    // cpu geometry
     Vertices vertices;
+    // gpu geometry (renderable)
+    VertexBuffer gpuVertices;
+    IndexBuffer gpuIndices;
 
     // material
 
     static void init(Entity* entity);
+
+    static void setVertices(Entity* entity, Vertices* vertices,
+                            GraphicsContext* ctx);
+
     static glm::mat4 modelMatrix(Entity* entity); // TODO cache
     static glm::mat4 viewMatrix(Entity* entity);
     static glm::mat4 projectionMatrix(Entity* entity);
