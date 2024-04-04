@@ -42,9 +42,14 @@ struct Entity {
     VertexBuffer gpuVertices;
     IndexBuffer gpuIndices;
 
+    // BindGroupEntry to hold model uniform buffer
+    // currently only model matrices
+    BindGroup bindGroup;
+
     // material
 
-    static void init(Entity* entity);
+    static void init(Entity* entity, GraphicsContext* ctx,
+                     WGPUBindGroupLayout bindGroupLayout);
 
     static void setVertices(Entity* entity, Vertices* vertices,
                             GraphicsContext* ctx);

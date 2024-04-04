@@ -575,7 +575,7 @@ void RenderPipeline::init(GraphicsContext* ctx, RenderPipeline* pipeline,
 
     WGPUPipelineLayoutDescriptor layoutDesc = {};
     layoutDesc.bindGroupLayoutCount = ARRAY_LENGTH(pipeline->bindGroupLayouts);
-    layoutDesc.bindGroupLayouts     = pipeline->bindGroupLayouts;
+    layoutDesc.bindGroupLayouts = pipeline->bindGroupLayouts; // one per @group
     WGPUPipelineLayout pipelineLayout
       = wgpuDeviceCreatePipelineLayout(ctx->device, &layoutDesc);
 

@@ -141,7 +141,11 @@ struct RenderPipeline {
     // bindings: per frame, per material, per draw
     WGPUBindGroupLayout bindGroupLayouts[3];
     // possible optimization: only store material bind group in render pipeline
-    // all pipelines can share global bind groups for per frame and per draw
+    // all pipelines can share global bind groups for per frame
+    // and renderable models need their own per draw bind groups
+    // each pipeline will need the frame/material/draw layouts
+    // each pipeline has a unique per-material layout
+    // the actual bind groups are stored elsewhere
     BindGroup bindGroups[3];
 
     static void init(GraphicsContext* ctx, RenderPipeline* pipeline,

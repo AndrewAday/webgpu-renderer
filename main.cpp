@@ -138,21 +138,19 @@ static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
     mouseY = ypos;
 }
 
-std::vector<Entity> renderables;
+std::vector<Entity*> renderables;
 
 int main(int, char**)
 {
     // test plane
     PlaneParams planeParams = { 1.0f, 1.0f, 1, 1 };
     Vertices planeVertices  = createPlane(&planeParams);
+    UNUSED_VAR(planeVertices);
 
     // test cube
     // CubeParams cubeParams = { 1.0f, 1.0f, 1.0f, 1, 1, 1 };
     // Vertices vertices     = createCube(&cubeParams);
     // Vertices::print(&vertices);
-
-    Entity::init(&cameraEntity);
-    cameraEntity.pos = glm::vec3(0.0, 0.0, 6.0); // move camera back
 
     // Initialize GLFW
     glfwInit();
@@ -188,14 +186,28 @@ int main(int, char**)
     GraphicsContext g_ctx = {};
     GraphicsContext::init(&g_ctx, window);
 
+    // initialize render pipeline
+    RenderPipeline pipeline = {};
+    RenderPipeline::init(&g_ctx, &pipeline, shaderCode, shaderCode);
+
+    Entity::init(&cameraEntity, &g_ctx,
+                 pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
+    cameraEntity.pos = glm::vec3(0.0, 0.0, 6.0); // move camera back
+
     // Create entities to render
     Entity planeEntity = {};
-    Entity::init(&planeEntity);
-    Entity::setVertices(&planeEntity, &planeVertices, &g_ctx);
-    renderables.push_back(planeEntity);
+    Entity::init(&planeEntity, &g_ctx,
+                 pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
+    // Entity::setVertices(&planeEntity, &planeVertices, &g_ctx);
+    planeEntity.pos = glm::vec3(0.0, -1.0, 0.0);
 
     Entity objEntity = {};
-    Entity::init(&objEntity);
+    Entity::init(&objEntity, &g_ctx, pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
+    objEntity.pos = glm::vec3(0.0, 1.0, 0.0);
+
+    renderables.push_back(&planeEntity);
+    renderables.push_back(&objEntity);
+
     {
         fastObjMesh* mesh = fast_obj_read("assets/suzanne.obj");
         // print mesh data
@@ -238,7 +250,7 @@ int main(int, char**)
         fast_obj_destroy(mesh);
 
         Entity::setVertices(&objEntity, &vertices, &g_ctx);
-        renderables.push_back(objEntity);
+        Entity::setVertices(&planeEntity, &vertices, &g_ctx);
     }
 
     // // Create vertex buffer
@@ -251,9 +263,6 @@ int main(int, char**)
     // IndexBuffer::init(&g_ctx, &indexBuffer, vertices.indicesCount,
     //                   vertices.indices, "indices");
 
-    RenderPipeline pipeline = {};
-    RenderPipeline::init(&g_ctx, &pipeline, shaderCode, shaderCode);
-
     // main loop
     while (!glfwWindowShouldClose(window)) {
         // Check whether the user clicked on the close button (and any other
@@ -263,50 +272,24 @@ int main(int, char**)
         WGPURenderPassEncoder renderPass
           = GraphicsContext::prepareFrame(&g_ctx);
 
-        Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
-                                  0.01f);
+        // Update
+        {
+            Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
+                                      0.01f);
+            Entity::rotateOnLocalAxis(&objEntity, glm::vec3(0.0, 1.0, 0.0),
+                                      -0.01f);
+            cameraEntity.pos = Spherical::toCartesian(cameraSpherical);
+            // camera lookat origin
+            cameraEntity.rot = glm::conjugate(
+              glm::toQuat(glm::lookAt(cameraEntity.pos, glm::vec3(0), VEC_UP)));
+        }
 
-        { // draw
+        // draw
+        {
+            // set shader
             wgpuRenderPassEncoderSetPipeline(renderPass, pipeline.pipeline);
 
-            // TODO: loop over renderables and draw
-
-            { // set vertex attributes
-                wgpuRenderPassEncoderSetVertexBuffer(
-                  renderPass, 0, objEntity.gpuVertices.buf, 0,
-                  sizeof(f32) * objEntity.vertices.vertexCount * 3);
-
-                auto normalsOffset
-                  = sizeof(f32) * objEntity.vertices.vertexCount * 3;
-
-                wgpuRenderPassEncoderSetVertexBuffer(
-                  renderPass, 1, objEntity.gpuVertices.buf, normalsOffset,
-                  sizeof(f32) * objEntity.vertices.vertexCount * 3);
-
-                auto texcoordsOffset
-                  = sizeof(f32) * objEntity.vertices.vertexCount * 6;
-
-                wgpuRenderPassEncoderSetVertexBuffer(
-                  renderPass, 2, objEntity.gpuVertices.buf, texcoordsOffset,
-                  sizeof(f32) * objEntity.vertices.vertexCount * 2);
-            }
-
-            wgpuRenderPassEncoderSetIndexBuffer(
-              renderPass, objEntity.gpuIndices.buf, WGPUIndexFormat_Uint32, 0,
-              objEntity.gpuIndices.desc.size);
-            // wgpuRenderPassEncoderDraw(renderPass,
-            // ARRAY_LENGTH(vertexPositions) / 2, 1, 0, 0);
-
-            // frame uniforms
-
-            // update camera transform from spherical coordinates
-            {
-                cameraEntity.pos = Spherical::toCartesian(cameraSpherical);
-                // camera lookat origin
-                cameraEntity.rot = glm::conjugate(glm::toQuat(
-                  glm::lookAt(cameraEntity.pos, glm::vec3(0), VEC_UP)));
-            }
-
+            // set frame uniforms
             f32 time                    = (f32)glfwGetTime();
             FrameUniforms frameUniforms = {};
             frameUniforms.projectionMat
@@ -319,6 +302,10 @@ int main(int, char**)
             wgpuQueueWriteBuffer(
               g_ctx.queue, pipeline.bindGroups[PER_FRAME_GROUP].uniformBuffer,
               0, &frameUniforms, sizeof(frameUniforms));
+            // set frame bind group
+            wgpuRenderPassEncoderSetBindGroup(
+              renderPass, PER_FRAME_GROUP,
+              pipeline.bindGroups[PER_FRAME_GROUP].bindGroup, 0, NULL);
 
             // material uniforms
             MaterialUniforms materialUniforms = {};
@@ -327,27 +314,65 @@ int main(int, char**)
               g_ctx.queue,
               pipeline.bindGroups[PER_MATERIAL_GROUP].uniformBuffer, 0,
               &materialUniforms, sizeof(materialUniforms));
+            // set material bind group
+            wgpuRenderPassEncoderSetBindGroup(
+              renderPass, PER_MATERIAL_GROUP,
+              pipeline.bindGroups[PER_MATERIAL_GROUP].bindGroup, 0, NULL);
 
-            // model uniforms
-            DrawUniforms drawUniforms = {};
-            drawUniforms.modelMat     = Entity::modelMatrix(&objEntity);
-            wgpuQueueWriteBuffer(
-              g_ctx.queue, pipeline.bindGroups[PER_DRAW_GROUP].uniformBuffer, 0,
-              &drawUniforms, sizeof(drawUniforms));
+            // TODO: loop over renderables and draw
+            for (Entity* entity : renderables) {
+                // check drawable
+                if (!entity->vertices.vertexData) continue;
 
-            // set bind groups
-            for (u32 i = 0; i < ARRAY_LENGTH(pipeline.bindGroups); i++) {
-                wgpuRenderPassEncoderSetBindGroup(
-                  renderPass, i, pipeline.bindGroups[i].bindGroup, 0, NULL);
+                // check indexed draw
+                // bool indexedDraw = entity->vertices.indicesCount > 0;
+
+                // set vertex attributes
+                wgpuRenderPassEncoderSetVertexBuffer(
+                  renderPass, 0, entity->gpuVertices.buf, 0,
+                  sizeof(f32) * entity->vertices.vertexCount * 3);
+
+                auto normalsOffset
+                  = sizeof(f32) * entity->vertices.vertexCount * 3;
+
+                wgpuRenderPassEncoderSetVertexBuffer(
+                  renderPass, 1, entity->gpuVertices.buf, normalsOffset,
+                  sizeof(f32) * entity->vertices.vertexCount * 3);
+
+                auto texcoordsOffset
+                  = sizeof(f32) * entity->vertices.vertexCount * 6;
+
+                wgpuRenderPassEncoderSetVertexBuffer(
+                  renderPass, 2, entity->gpuVertices.buf, texcoordsOffset,
+                  sizeof(f32) * entity->vertices.vertexCount * 2);
+
+                // populate index buffer
+                // if (indexedDraw)
+                wgpuRenderPassEncoderSetIndexBuffer(
+                  renderPass, entity->gpuIndices.buf, WGPUIndexFormat_Uint32, 0,
+                  entity->gpuIndices.desc.size);
+                // else
+                //     wgpuRenderPassEncoderDraw(
+                //       renderPass, entity->vertices.vertexCount, 1, 0, 0);
+
+                // model uniforms
+                DrawUniforms drawUniforms = {};
+                drawUniforms.modelMat     = Entity::modelMatrix(entity);
+                wgpuQueueWriteBuffer(g_ctx.queue,
+                                     entity->bindGroup.uniformBuffer, 0,
+                                     &drawUniforms, sizeof(drawUniforms));
+                // set model bind group
+                wgpuRenderPassEncoderSetBindGroup(renderPass, PER_DRAW_GROUP,
+                                                  entity->bindGroup.bindGroup,
+                                                  0, NULL);
+                // draw call (indexed)
+                wgpuRenderPassEncoderDrawIndexed(
+                  renderPass, entity->vertices.indicesCount, 1, 0, 0, 0);
+                // draw call (nonindexed)
+                // wgpuRenderPassEncoderDraw(renderPass,
+                //                           entity->vertices.vertexCount, 1,
+                //                           0, 0);
             }
-
-            // draw call (indexed)
-            wgpuRenderPassEncoderDrawIndexed(
-              renderPass, objEntity.vertices.indicesCount, 1, 0, 0, 0);
-            // draw call (nonindexed)
-            // wgpuRenderPassEncoderDraw(renderPass,
-            //                           objEntity.vertices.vertexCount, 1, 0,
-            //                           0);
         }
 
         GraphicsContext::presentFrame(&g_ctx);

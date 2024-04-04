@@ -1,9 +1,11 @@
 #include "entity.h"
 #include "context.h"
+#include "shaders.h"
 
 #include <glm/gtx/quaternion.hpp> // quatToMat4
 
-void Entity::init(Entity* entity)
+void Entity::init(Entity* entity, GraphicsContext* ctx,
+                  WGPUBindGroupLayout bindGroupLayout)
 {
     // zero out
     *entity = {};
@@ -11,6 +13,10 @@ void Entity::init(Entity* entity)
     entity->pos = glm::vec3(0.0);
     entity->rot = QUAT_IDENTITY;
     entity->sca = glm::vec3(1.0);
+
+    // init bindgroup for per-entity uniform buffer
+    BindGroup::init(ctx, &entity->bindGroup, bindGroupLayout,
+                    sizeof(DrawUniforms));
 
     // init camera params
     entity->fovDegrees = 45.0f;
