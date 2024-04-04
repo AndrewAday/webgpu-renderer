@@ -7,6 +7,11 @@ project(
     LANGUAGES CXX C # programming languages used by the project
 )
 
+set(
+    CORE 
+    core/log.h core/log.c
+)
+
 add_executable(${CMAKE_PROJECT_NAME} 
     main.cpp
     common.h
@@ -15,6 +20,7 @@ add_executable(${CMAKE_PROJECT_NAME}
     shapes.h shapes.cpp
     entity.h entity.cpp
     shaders.h
+    ${CORE}
 )
 
 # Defines
@@ -23,6 +29,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     $<$<CONFIG:Release>:NDEBUG>
     RESOURCE_DIR="./resources"
     GLM_FORCE_DEPTH_ZERO_TO_ONE # glm force depth range to 0-1
+    GLM_ENABLE_EXPERIMENTAL
+    LOG_USE_COLOR
 )
 
 
