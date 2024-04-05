@@ -1,5 +1,8 @@
 #include <iostream>
 
+#include "core/log.h"
+#include "stb/stb_image.h"
+
 #include "context.h"
 #include "shaders.h"
 
@@ -568,8 +571,41 @@ void RenderPipeline::init(GraphicsContext* ctx, RenderPipeline* pipeline,
     // layout
     pipeline->bindGroupLayouts[PER_FRAME_GROUP]
       = createBindGroupLayout(ctx, PER_FRAME_GROUP, sizeof(FrameUniforms));
-    pipeline->bindGroupLayouts[PER_MATERIAL_GROUP] = createBindGroupLayout(
-      ctx, PER_MATERIAL_GROUP, sizeof(MaterialUniforms));
+
+    // material layout
+    {
+        WGPUBindGroupLayoutEntry bindGroupLayouts[3];
+
+        // Per material uniforms
+        bindGroupLayouts[0]         = {};
+        bindGroupLayouts[0].binding = 0;
+        bindGroupLayouts[0].visibility // always both for simplicity
+          = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        bindGroupLayouts[0].buffer.type = WGPUBufferBindingType_Uniform;
+        bindGroupLayouts[0].buffer.minBindingSize   = sizeof(MaterialUniforms);
+        bindGroupLayouts[0].buffer.hasDynamicOffset = false;
+
+        // per material texture
+        bindGroupLayouts[1]                       = {};
+        bindGroupLayouts[1].binding               = 1;
+        bindGroupLayouts[1].visibility            = WGPUShaderStage_Fragment;
+        bindGroupLayouts[1].texture.sampleType    = WGPUTextureSampleType_Float;
+        bindGroupLayouts[1].texture.viewDimension = WGPUTextureViewDimension_2D;
+
+        // per material sampler
+        bindGroupLayouts[2]              = {};
+        bindGroupLayouts[2].binding      = 2;
+        bindGroupLayouts[2].visibility   = WGPUShaderStage_Fragment;
+        bindGroupLayouts[2].sampler.type = WGPUSamplerBindingType_Filtering;
+
+        // Create a bind group layout
+        WGPUBindGroupLayoutDescriptor bindGroupLayoutDesc = {};
+        bindGroupLayoutDesc.entryCount = ARRAY_LENGTH(bindGroupLayouts);
+        bindGroupLayoutDesc.entries    = bindGroupLayouts;
+        pipeline->bindGroupLayouts[PER_MATERIAL_GROUP]
+          = wgpuDeviceCreateBindGroupLayout(ctx->device, &bindGroupLayoutDesc);
+    }
+
     pipeline->bindGroupLayouts[PER_DRAW_GROUP]
       = createBindGroupLayout(ctx, PER_DRAW_GROUP, sizeof(DrawUniforms));
 
@@ -583,12 +619,6 @@ void RenderPipeline::init(GraphicsContext* ctx, RenderPipeline* pipeline,
     BindGroup::init(ctx, &pipeline->bindGroups[PER_FRAME_GROUP],
                     pipeline->bindGroupLayouts[PER_FRAME_GROUP],
                     sizeof(FrameUniforms));
-    BindGroup::init(ctx, &pipeline->bindGroups[PER_MATERIAL_GROUP],
-                    pipeline->bindGroupLayouts[PER_MATERIAL_GROUP],
-                    sizeof(MaterialUniforms));
-    BindGroup::init(ctx, &pipeline->bindGroups[PER_DRAW_GROUP],
-                    pipeline->bindGroupLayouts[PER_DRAW_GROUP],
-                    sizeof(DrawUniforms));
 
     pipeline->desc              = {};
     pipeline->desc.label        = "render pipeline";
@@ -657,4 +687,185 @@ void DepthTexture::release(DepthTexture* depthTexture)
     wgpuTextureViewRelease(depthTexture->view);
     wgpuTextureDestroy(depthTexture->texture);
     wgpuTextureRelease(depthTexture->texture);
+}
+
+// ============================================================================
+// Texture
+// ============================================================================
+
+void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
+                           const char* filename)
+{
+    ASSERT(texture->texture == NULL);
+
+    i32 width = 0, height = 0;
+    // Force loading 4 channel images to 3 channel by stb becasue Dawn doesn't
+    // support 3 channel formats currently. The group is discussing on whether
+    // webgpu shoud support 3 channel format.
+    // https://github.com/gpuweb/gpuweb/issues/66#issuecomment-410021505
+    i32 read_comps    = 4;
+    i32 desired_comps = STBI_rgb_alpha; // force 4 channels
+
+    stbi_set_flip_vertically_on_load(true);
+    stbi_uc* pixel_data = stbi_load(filename,     //
+                                    &width,       //
+                                    &height,      //
+                                    &read_comps,  //
+                                    desired_comps //
+    );
+
+    if (pixel_data == NULL) {
+        log_error("Couldn't load '%s'\n", filename);
+        log_error("Reason: %s\n", stbi_failure_reason());
+        return;
+    } else {
+        log_debug("Loaded image %s (%d, %d, %d / %d)\n", filename, width,
+                  height, read_comps, desired_comps);
+    }
+
+    // save texture info
+    texture->width  = width;
+    texture->height = height;
+    texture->depth  = 1;
+
+    // TODO: add mip-mapping
+    texture->mip_level_count = 1;
+
+    // TODO: support compressed texture formats
+    texture->format    = WGPUTextureFormat_RGBA8Unorm;
+    texture->dimension = WGPUTextureDimension_2D;
+
+    // create texture
+    WGPUTextureDescriptor textureDesc = {};
+    textureDesc.usage
+      = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    textureDesc.dimension       = texture->dimension;
+    textureDesc.size            = { (u32)width, (u32)height, 1 };
+    textureDesc.format          = texture->format;
+    textureDesc.mipLevelCount   = texture->mip_level_count;
+    textureDesc.sampleCount     = 1;
+    textureDesc.viewFormatCount = 0;
+    textureDesc.viewFormats     = NULL;
+    // textureDesc.label                  = "Texture";
+
+    texture->texture = wgpuDeviceCreateTexture(ctx->device, &textureDesc);
+    ASSERT(texture->texture != NULL);
+
+    // write texture data
+    {
+        WGPUImageCopyTexture destination = {};
+        destination.texture              = texture->texture;
+        destination.mipLevel             = 0;
+        destination.origin               = {
+            0,
+            0,
+            0,
+        }; // equivalent of the offset argument of Queue::writeBuffer
+        destination.aspect
+          = WGPUTextureAspect_All; // only relevant for depth/Stencil textures
+
+        WGPUTextureDataLayout source = {};
+        source.offset       = 0; // where to start reading from the cpu buffer
+        source.bytesPerRow  = 4 * textureDesc.size.width;
+        source.rowsPerImage = textureDesc.size.height;
+
+        const u64 dataSize = textureDesc.size.width * textureDesc.size.height
+                             * textureDesc.size.depthOrArrayLayers
+                             * desired_comps;
+
+        wgpuQueueWriteTexture(ctx->queue, &destination, pixel_data, dataSize,
+                              &source, &textureDesc.size);
+    }
+
+    // free pixel data
+    stbi_image_free(pixel_data);
+
+    /* Create the texture view */
+    WGPUTextureViewDescriptor textureViewDesc = {};
+    textureViewDesc.format                    = textureDesc.format;
+    textureViewDesc.dimension                 = WGPUTextureViewDimension_2D;
+    textureViewDesc.baseMipLevel              = 0;
+    textureViewDesc.mipLevelCount             = textureDesc.mipLevelCount;
+    textureViewDesc.baseArrayLayer            = 0;
+    textureViewDesc.arrayLayerCount           = 1;
+    textureViewDesc.aspect                    = WGPUTextureAspect_All;
+    texture->view = wgpuTextureCreateView(texture->texture, &textureViewDesc);
+
+    /* Create the texture sampler */
+    WGPUSamplerDescriptor samplerDesc = {};
+    samplerDesc.addressModeU          = WGPUAddressMode_Repeat;
+    samplerDesc.addressModeV          = WGPUAddressMode_Repeat;
+    samplerDesc.addressModeW          = WGPUAddressMode_Repeat;
+    samplerDesc.minFilter             = WGPUFilterMode_Linear;
+    samplerDesc.magFilter             = WGPUFilterMode_Linear;
+    samplerDesc.mipmapFilter          = WGPUMipmapFilterMode_Linear;
+    samplerDesc.lodMinClamp           = 0.0f;
+    samplerDesc.lodMaxClamp           = (f32)texture->mip_level_count;
+    samplerDesc.maxAnisotropy         = 1; // TODO: try max of 16
+
+    texture->sampler = wgpuDeviceCreateSampler(ctx->device, &samplerDesc);
+};
+
+void Texture::release(Texture* texture)
+{
+    // release textureview
+    wgpuTextureViewRelease(texture->view);
+
+    // release texture
+    wgpuTextureDestroy(texture->texture);
+    wgpuTextureRelease(texture->texture);
+
+    // release sampler
+    wgpuSamplerRelease(texture->sampler);
+}
+
+// ============================================================================
+// Material
+// ============================================================================
+
+void Material::init(GraphicsContext* ctx, Material* material,
+                    RenderPipeline* pipeline, Texture* texture)
+{
+    ASSERT(material->bindGroup == NULL);
+    ASSERT(texture != NULL);
+
+    material->texture = texture;
+
+    // uniform buffer
+    WGPUBufferDescriptor bufferDesc = {};
+    bufferDesc.size
+      = sizeof(MaterialUniforms); // TODO: support multiple materials
+    bufferDesc.mappedAtCreation = false;
+    bufferDesc.usage        = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Uniform;
+    material->uniformBuffer = wgpuDeviceCreateBuffer(ctx->device, &bufferDesc);
+
+    // uniform buffer bindgroup entry
+    WGPUBindGroupEntry uniformBinding = {};
+    uniformBinding.binding            = 0; // @binding(0)
+    uniformBinding.offset             = 0;
+    uniformBinding.buffer             = material->uniformBuffer;
+    uniformBinding.size               = bufferDesc.size;
+
+    // texture bindgroup entry
+    WGPUBindGroupEntry textureBinding = {};
+    textureBinding.binding            = 1; // @binding(1)
+    textureBinding.textureView        = texture->view;
+
+    // sampler bindgroup entry
+    WGPUBindGroupEntry samplerBinding = {};
+    samplerBinding.binding            = 2; // @binding(2)
+    samplerBinding.sampler            = texture->sampler;
+
+    WGPUBindGroupEntry bindGroupEntries[]
+      = { uniformBinding, textureBinding, samplerBinding };
+
+    // A bind group contains one or multiple bindings
+    WGPUBindGroupDescriptor bindGroupDesc = {};
+    bindGroupDesc.layout     = pipeline->bindGroupLayouts[PER_MATERIAL_GROUP];
+    bindGroupDesc.entries    = bindGroupEntries;
+    bindGroupDesc.entryCount = ARRAY_LENGTH(bindGroupEntries);
+    ASSERT(bindGroupDesc.entryCount == 3);
+
+    material->bindGroup
+      = wgpuDeviceCreateBindGroup(ctx->device, &bindGroupDesc);
 }

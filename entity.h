@@ -36,9 +36,9 @@ struct Entity {
     f32 nearPlane;
     f32 farPlane;
 
-    // cpu geometry
+    // cpu geometry (TODO share across entities)
     Vertices vertices;
-    // gpu geometry (renderable)
+    // gpu geometry (renderable) (TODO share across entities)
     VertexBuffer gpuVertices;
     IndexBuffer gpuIndices;
 
@@ -46,7 +46,7 @@ struct Entity {
     // currently only model matrices
     BindGroup bindGroup;
 
-    // material
+    // material (TODO share across entities)
 
     static void init(Entity* entity, GraphicsContext* ctx,
                      WGPUBindGroupLayout bindGroupLayout);

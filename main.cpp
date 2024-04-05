@@ -19,12 +19,10 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp> // quatToMat4
 // #include <glm/gtx/string_cast.hpp>
-
-#define CGLTF_IMPLEMENTATION
 #include <cgltf/cgltf.h>
-
-#define FAST_OBJ_IMPLEMENTATION
 #include <fast_obj/fast_obj.h>
+
+#include "core/log.h"
 
 #include "common.h"
 #include "context.h"
@@ -145,7 +143,6 @@ int main(int, char**)
     // test plane
     PlaneParams planeParams = { 1.0f, 1.0f, 1, 1 };
     Vertices planeVertices  = createPlane(&planeParams);
-    UNUSED_VAR(planeVertices);
 
     // test cube
     // CubeParams cubeParams = { 1.0f, 1.0f, 1.0f, 1, 1, 1 };
@@ -198,18 +195,21 @@ int main(int, char**)
     Entity planeEntity = {};
     Entity::init(&planeEntity, &g_ctx,
                  pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
-    // Entity::setVertices(&planeEntity, &planeVertices, &g_ctx);
+    Entity::setVertices(&planeEntity, &planeVertices, &g_ctx);
     planeEntity.pos = glm::vec3(0.0, -1.0, 0.0);
+    // planeEntity.sca = glm::vec3(.8f);
 
     Entity objEntity = {};
     Entity::init(&objEntity, &g_ctx, pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
     objEntity.pos = glm::vec3(0.0, 1.0, 0.0);
+    objEntity.sca = glm::vec3(.8f);
 
     renderables.push_back(&planeEntity);
     renderables.push_back(&objEntity);
 
     {
-        fastObjMesh* mesh = fast_obj_read("assets/suzanne.obj");
+        // fastObjMesh* mesh = fast_obj_read("assets/suzanne.obj");
+        fastObjMesh* mesh = fast_obj_read("assets/cube.obj");
         // print mesh data
         printf(
           "Loaded mesh\n"
@@ -250,18 +250,17 @@ int main(int, char**)
         fast_obj_destroy(mesh);
 
         Entity::setVertices(&objEntity, &vertices, &g_ctx);
-        Entity::setVertices(&planeEntity, &vertices, &g_ctx);
+        // Entity::setVertices(&planeEntity, &vertices, &g_ctx);
     }
 
-    // // Create vertex buffer
-    // VertexBuffer vertexBuffer = {};
-    // VertexBuffer::init(&g_ctx, &vertexBuffer, 8 * vertices.vertexCount,
-    //                    vertices.vertexData, "vertices");
+    // initialize texture
+    Texture texture = {};
+    Texture::initFromFile(&g_ctx, &texture, "assets/uv.png");
+    // Texture::initFromFile(&g_ctx, &texture, "foo");
 
-    // // create index buffer
-    // IndexBuffer indexBuffer = {};
-    // IndexBuffer::init(&g_ctx, &indexBuffer, vertices.indicesCount,
-    //                   vertices.indices, "indices");
+    // initialize Material
+    Material material = {};
+    Material::init(&g_ctx, &material, &pipeline, &texture);
 
     // main loop
     while (!glfwWindowShouldClose(window)) {
@@ -274,8 +273,9 @@ int main(int, char**)
 
         // Update
         {
-            Entity::rotateOnLocalAxis(&planeEntity, glm::vec3(0.0, 1.0, 0.0),
-                                      0.01f);
+            // Entity::rotateOnLocalAxis(&planeEntity,             //
+            //                           glm::vec3(0.0, 1.0, 0.0), //
+            //                           0.01f);                   //
             Entity::rotateOnLocalAxis(&objEntity, glm::vec3(0.0, 1.0, 0.0),
                                       -0.01f);
             cameraEntity.pos = Spherical::toCartesian(cameraSpherical);
@@ -309,15 +309,15 @@ int main(int, char**)
 
             // material uniforms
             MaterialUniforms materialUniforms = {};
-            materialUniforms.color            = glm::vec4(1.0, 0.0, 0.0, 1.0);
-            wgpuQueueWriteBuffer(
-              g_ctx.queue,
-              pipeline.bindGroups[PER_MATERIAL_GROUP].uniformBuffer, 0,
-              &materialUniforms, sizeof(materialUniforms));
-            // set material bind group
-            wgpuRenderPassEncoderSetBindGroup(
-              renderPass, PER_MATERIAL_GROUP,
-              pipeline.bindGroups[PER_MATERIAL_GROUP].bindGroup, 0, NULL);
+            materialUniforms.color            = glm::vec4(1.0, 1.0, 1.0, 1.0);
+            wgpuQueueWriteBuffer(g_ctx.queue,                                //
+                                 material.uniformBuffer,                     //
+                                 0,                                          //
+                                 &materialUniforms, sizeof(materialUniforms) //
+            );
+            // set material bind groups
+            wgpuRenderPassEncoderSetBindGroup(renderPass, PER_MATERIAL_GROUP,
+                                              material.bindGroup, 0, NULL);
 
             // TODO: loop over renderables and draw
             for (Entity* entity : renderables) {

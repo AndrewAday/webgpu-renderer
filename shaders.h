@@ -50,6 +50,9 @@ static const char* shaderCode = CODE(
     };
 
     @group(PER_MATERIAL_GROUP) @binding(0) var<uniform> u_Material: MaterialUniforms;
+    @group(PER_MATERIAL_GROUP) @binding(1) var u_Texture: texture_2d<f32>;
+    @group(PER_MATERIAL_GROUP) @binding(2) var u_Sampler: sampler;
+
 
     struct DrawUniforms {
         modelMat: mat4x4f,
@@ -100,12 +103,16 @@ static const char* shaderCode = CODE(
     {
         // base color
         var color : vec4f = u_Material.color;
-        color.g = 0.5 + 0.5 * sin(u_Frame.time);
+        // color.g = 0.5 + 0.5 * sin(u_Frame.time);
         // lambertian diffuse
         let normal = normalize(in.v_normal);
         var lightContrib : f32 = max(0.0, dot(u_Frame.dirLight, -normal));
         // add global ambient
         lightContrib = clamp(lightContrib, 0.2, 1.0);
+        
+        // texture map
+        let texelCoords = vec2i(in.v_uv * vec2f(textureDimensions(u_Texture)));
+        color *= textureLoad(u_Texture, texelCoords, 0);
 
         return vec4f(color.rgb * lightContrib, color.a);
         // return vec4f(in.v_normal, 1.0);

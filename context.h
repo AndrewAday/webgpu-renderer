@@ -138,15 +138,16 @@ struct RenderPipeline {
     WGPURenderPipeline pipeline;
     WGPURenderPipelineDescriptor desc;
 
-    // bindings: per frame, per material, per draw
+    // binding layouts: per frame, per material, per draw
     WGPUBindGroupLayout bindGroupLayouts[3];
+
     // possible optimization: only store material bind group in render pipeline
     // all pipelines can share global bind groups for per frame
     // and renderable models need their own per draw bind groups
     // each pipeline will need the frame/material/draw layouts
     // each pipeline has a unique per-material layout
     // the actual bind groups are stored elsewhere
-    BindGroup bindGroups[3];
+    BindGroup bindGroups[1]; // just PER_FRAME_GROUP
 
     static void init(GraphicsContext* ctx, RenderPipeline* pipeline,
                      const char* vertexShaderCode,
@@ -159,6 +160,8 @@ struct RenderPipeline {
 // Depth Texture
 // ============================================================================
 
+// TODO: unused, remove?
+
 struct DepthTexture {
     WGPUTexture texture;
     WGPUTextureView view;
@@ -168,4 +171,45 @@ struct DepthTexture {
                      WGPUTextureFormat format);
 
     static void release(DepthTexture* depthTexture);
+};
+
+// ============================================================================
+// Texture
+// ============================================================================
+
+struct Texture {
+    u32 width;
+    u32 height;
+    u32 depth;
+    u32 mip_level_count;
+
+    WGPUTextureFormat format;
+    WGPUTextureDimension dimension;
+    WGPUTexture texture;
+    WGPUTextureView view;
+    WGPUSampler sampler;
+
+    static void initFromFile(GraphicsContext* ctx, Texture* texture,
+                             const char* filename);
+
+    static void release(Texture* texture);
+};
+
+// ============================================================================
+// Material
+// ============================================================================
+
+/// @brief Material instance provides uniforms/textures/etc
+/// and bindGroup for a given render pipeline.
+/// Each render pipeline is associated with particular material type
+struct Material {
+    WGPUBindGroup bindGroup;
+    WGPUBuffer uniformBuffer;
+    // glm::vec4 color;
+    Texture* texture; // multiple materials can share same texture
+
+    // TODO: store MaterialUniforms struct (struct inheritance, like Obj)
+
+    static void init(GraphicsContext* ctx, Material* material,
+                     RenderPipeline* pipeline, Texture* texture);
 };

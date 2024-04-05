@@ -15,6 +15,7 @@ set(
 add_executable(${CMAKE_PROJECT_NAME} 
     main.cpp
     common.h
+    implementations.cpp
     memory.h memory.cpp
     context.h context.cpp
     shapes.h shapes.cpp
