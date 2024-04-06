@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include "core/log.h"
+#include "memory.h"
 #include "stb/stb_image.h"
 
 #include "context.h"
@@ -690,20 +691,382 @@ void DepthTexture::release(DepthTexture* depthTexture)
 }
 
 // ============================================================================
+// MipMapGenerator (static)
+// ============================================================================
+
+#define NUMBER_OF_TEXTURE_FORMATS WGPUTextureFormat_ASTC12x12UnormSrgb // 94
+
+/// @brief Determines the number of mip levels needed for a full mip chain
+static u32 mipLevelCount(int width, int height)
+{
+    return (u32)(floor((float)(log2(MAX(width, height))))) + 1;
+}
+
+// TODO make part of GraphicsContext and cleanup
+struct MipMapGenerator {
+    GraphicsContext* ctx;
+    WGPUSampler sampler;
+
+    // Pipeline for every texture format used.
+    // TODO: can layout be shared?
+    WGPUBindGroupLayout pipeline_layouts[(u32)NUMBER_OF_TEXTURE_FORMATS];
+    WGPURenderPipeline pipelines[(u32)NUMBER_OF_TEXTURE_FORMATS];
+    bool active_pipelines[(u32)NUMBER_OF_TEXTURE_FORMATS];
+
+    // Vertex state and Fragment state are shared between all pipelines
+    WGPUVertexState vertexState;
+    WGPUFragmentState fragmentState;
+
+    static void init(GraphicsContext* ctx, MipMapGenerator* generator);
+    static WGPURenderPipeline getPipeline(MipMapGenerator* generator,
+                                          WGPUTextureFormat format);
+    static WGPUTexture generate(MipMapGenerator* generator, WGPUTexture texture,
+                                WGPUTextureDescriptor* texture_desc);
+    static void release(MipMapGenerator* generator);
+};
+
+static MipMapGenerator mipMapGenerator = {};
+
+void MipMapGenerator::init(GraphicsContext* ctx, MipMapGenerator* generator)
+{
+    generator->ctx = ctx;
+
+    // Create sampler
+    WGPUSamplerDescriptor sampler_desc = {
+        .label         = "mip map sampler",
+        .addressModeU  = WGPUAddressMode_ClampToEdge,
+        .addressModeV  = WGPUAddressMode_ClampToEdge,
+        .addressModeW  = WGPUAddressMode_ClampToEdge,
+        .minFilter     = WGPUFilterMode_Linear,
+        .magFilter     = WGPUFilterMode_Nearest,
+        .mipmapFilter  = WGPUMipmapFilterMode_Nearest,
+        .lodMinClamp   = 0.0f,
+        .lodMaxClamp   = 1.0f,
+        .maxAnisotropy = 1,
+    };
+    generator->sampler = wgpuDeviceCreateSampler(ctx->device, &sampler_desc);
+}
+
+void MipMapGenerator::release(MipMapGenerator* generator)
+{
+    // release sampler
+    wgpuSamplerReference(generator->sampler);
+
+    // release pipelines
+    for (uint32_t i = 0; i < (uint32_t)NUMBER_OF_TEXTURE_FORMATS; ++i) {
+        if (generator->active_pipelines[i]) {
+            wgpuRenderPipelineRelease(generator->pipelines[i]);
+            generator->active_pipelines[i] = false;
+        }
+    }
+
+    // release shaders
+    // if (generator->vertexState.module != NULL)
+    wgpuShaderModuleRelease(generator->vertexState.module);
+    // if (generator->fragmentState.module != NULL)
+    wgpuShaderModuleRelease(generator->fragmentState.module);
+}
+
+WGPURenderPipeline MipMapGenerator::getPipeline(MipMapGenerator* generator,
+                                                WGPUTextureFormat format)
+{
+    u32 pipeline_index = (u32)format;
+    ASSERT(pipeline_index < (u32)NUMBER_OF_TEXTURE_FORMATS)
+    if (generator->active_pipelines[pipeline_index])
+        return generator->pipelines[pipeline_index];
+
+    // Create pipeline if it doesn't exist
+    GraphicsContext* ctx = generator->ctx;
+
+    // Primitive state
+    WGPUPrimitiveState primitiveStateDesc = {};
+    primitiveStateDesc.topology           = WGPUPrimitiveTopology_TriangleStrip;
+    primitiveStateDesc.stripIndexFormat   = WGPUIndexFormat_Uint32;
+    primitiveStateDesc.frontFace          = WGPUFrontFace_CCW;
+    primitiveStateDesc.cullMode           = WGPUCullMode_None;
+
+    // Color target state
+    WGPUBlendState blend_state                   = createBlendState(false);
+    WGPUColorTargetState color_target_state_desc = {};
+    color_target_state_desc.format               = format;
+    color_target_state_desc.blend                = &blend_state;
+    color_target_state_desc.writeMask            = WGPUColorWriteMask_All;
+
+    // Vertex state and Fragment state are shared between all pipelines, so
+    // only create once.
+    if (!generator->vertexState.module || !generator->fragmentState.module) {
+
+        ShaderModule vertexShaderModule = {}, fragmentShaderModule = {};
+        ShaderModule::init(ctx, &vertexShaderModule, mipMapShader,
+                           "mipmap vertex shader");
+        ShaderModule::init(ctx, &fragmentShaderModule, mipMapShader,
+                           "mipmap fragment shader");
+        // vertex state
+        generator->vertexState             = {};
+        generator->vertexState.bufferCount = 0;
+        generator->vertexState.buffers     = NULL;
+        generator->vertexState.module      = vertexShaderModule.module;
+        generator->vertexState.entryPoint  = VS_ENTRY_POINT;
+
+        // fragment state
+        generator->fragmentState             = {};
+        generator->fragmentState.module      = fragmentShaderModule.module;
+        generator->fragmentState.entryPoint  = FS_ENTRY_POINT;
+        generator->fragmentState.targetCount = 1;
+        generator->fragmentState.targets     = &color_target_state_desc;
+
+        // don't release shader modules here, they are released in
+        // MipMapGenerator_release shader modules need to be saved for creating
+        // other pipelines
+    }
+
+    // Multisample state
+    WGPUMultisampleState multisampleState   = {};
+    multisampleState.count                  = 1;
+    multisampleState.mask                   = 0xFFFFFFFF;
+    multisampleState.alphaToCoverageEnabled = false;
+
+    WGPURenderPipelineDescriptor pipelineDesc = {};
+    // layout: auto
+    pipelineDesc.label       = "mipmap blit render pipeline";
+    pipelineDesc.primitive   = primitiveStateDesc;
+    pipelineDesc.vertex      = generator->vertexState;
+    pipelineDesc.fragment    = &generator->fragmentState;
+    pipelineDesc.multisample = multisampleState;
+
+    // Create rendering pipeline using the specified states
+    generator->pipelines[pipeline_index]
+      = wgpuDeviceCreateRenderPipeline(ctx->device, &pipelineDesc);
+    ASSERT(generator->pipelines[pipeline_index] != NULL);
+
+    // Store the bind group layout of the created pipeline
+    // TODO: can probably re-use a single bindgroup for all pipelines
+    generator->pipeline_layouts[pipeline_index]
+      = wgpuRenderPipelineGetBindGroupLayout(
+        generator->pipelines[pipeline_index], 0);
+    ASSERT(generator->pipeline_layouts[pipeline_index] != NULL)
+
+    // Update active pipeline state
+    generator->active_pipelines[pipeline_index] = true;
+
+    return generator->pipelines[pipeline_index];
+}
+
+WGPUTexture MipMapGenerator::generate(MipMapGenerator* generator,
+                                      WGPUTexture texture,
+                                      WGPUTextureDescriptor* texture_desc)
+{
+    WGPURenderPipeline pipeline
+      = MipMapGenerator::getPipeline(generator, texture_desc->format);
+
+    if (texture_desc->dimension == WGPUTextureDimension_3D
+        || texture_desc->dimension == WGPUTextureDimension_1D) {
+        log_error(
+          "Generating mipmaps for non-2d textures is currently unsupported!" //
+        );
+        return NULL;
+    }
+
+    GraphicsContext* ctx        = generator->ctx;
+    WGPUTexture mip_texture     = texture;
+    const u32 array_layer_count = texture_desc->size.depthOrArrayLayers > 0 ?
+                                    texture_desc->size.depthOrArrayLayers :
+                                    1; // Only valid for 2D textures.
+    const u32 mip_level_count   = texture_desc->mipLevelCount;
+
+    WGPUExtent3D mip_level_size = {
+        (u32)ceil(texture_desc->size.width / 2.0f),
+        (u32)ceil(texture_desc->size.height / 2.0f),
+        array_layer_count,
+    };
+
+    // If the texture was created with RENDER_ATTACHMENT usage we can render
+    // directly between mip levels.
+    bool render_to_source
+      = texture_desc->usage & WGPUTextureUsage_RenderAttachment;
+    if (!render_to_source) {
+        // Otherwise we have to use a separate texture to render into. It can be
+        // one mip level smaller than the source texture, since we already have
+        // the top level.
+        WGPUTextureDescriptor mip_texture_desc = {};
+        mip_texture_desc.size                  = mip_level_size;
+        mip_texture_desc.format                = texture_desc->format;
+        mip_texture_desc.usage                 = WGPUTextureUsage_CopySrc
+                                 | WGPUTextureUsage_TextureBinding
+                                 | WGPUTextureUsage_RenderAttachment;
+        mip_texture_desc.dimension     = WGPUTextureDimension_2D;
+        mip_texture_desc.mipLevelCount = texture_desc->mipLevelCount - 1;
+        mip_texture_desc.sampleCount   = 1;
+
+        mip_texture = wgpuDeviceCreateTexture(ctx->device, &mip_texture_desc);
+        ASSERT(mip_texture != NULL);
+    }
+
+    WGPUCommandEncoder cmd_encoder
+      = wgpuDeviceCreateCommandEncoder(ctx->device, NULL);
+    u32 pipeline_index = (u32)texture_desc->format;
+    WGPUBindGroupLayout bind_group_layout
+      = generator->pipeline_layouts[pipeline_index];
+
+    const u32 views_count  = array_layer_count * mip_level_count;
+    WGPUTextureView* views = ALLOCATE_COUNT(WGPUTextureView, views_count);
+
+    const u32 bind_group_count = array_layer_count * (mip_level_count - 1);
+    WGPUBindGroup* bind_groups
+      = ALLOCATE_COUNT(WGPUBindGroup, bind_group_count);
+
+    WGPUTextureViewDescriptor viewDesc = {};
+    viewDesc.label                     = "src_view";
+    viewDesc.aspect                    = WGPUTextureAspect_All;
+    viewDesc.baseMipLevel              = 0;
+    viewDesc.mipLevelCount             = 1;
+    viewDesc.dimension                 = WGPUTextureViewDimension_2D;
+    viewDesc.baseArrayLayer            = 0; // updated in loop
+    viewDesc.arrayLayerCount           = 1;
+
+    for (u32 array_layer = 0; array_layer < array_layer_count; ++array_layer) {
+        u32 view_index = array_layer * mip_level_count;
+
+        viewDesc.baseArrayLayer = array_layer;
+        views[view_index]       = wgpuTextureCreateView(texture, &viewDesc);
+
+        u32 dst_mip_level = render_to_source ? 1 : 0;
+        for (u32 i = 1; i < texture_desc->mipLevelCount; ++i) {
+            const uint32_t target_mip = view_index + i;
+
+            WGPUTextureViewDescriptor viewDesc = {};
+            viewDesc.label                     = "dst_view";
+            viewDesc.aspect                    = WGPUTextureAspect_All;
+            viewDesc.baseMipLevel              = dst_mip_level++;
+            viewDesc.mipLevelCount             = 1;
+            viewDesc.dimension                 = WGPUTextureViewDimension_2D;
+            viewDesc.baseArrayLayer            = array_layer;
+            viewDesc.arrayLayerCount           = 1;
+
+            views[target_mip] = wgpuTextureCreateView(mip_texture, &viewDesc);
+
+            WGPURenderPassColorAttachment color_attachment_desc = {};
+            color_attachment_desc.view          = views[target_mip];
+            color_attachment_desc.resolveTarget = NULL;
+            color_attachment_desc.loadOp        = WGPULoadOp_Clear;
+            color_attachment_desc.storeOp       = WGPUStoreOp_Store;
+            color_attachment_desc.clearValue    = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+            WGPURenderPassDescriptor render_pass_desc = {};
+            render_pass_desc.colorAttachmentCount     = 1;
+            render_pass_desc.colorAttachments         = &color_attachment_desc;
+            render_pass_desc.depthStencilAttachment   = NULL;
+
+            WGPURenderPassEncoder pass_encoder
+              = wgpuCommandEncoderBeginRenderPass(cmd_encoder,
+                                                  &render_pass_desc);
+
+            // initialize bind group entries
+            WGPUBindGroupEntry bg_entries[2];
+
+            // sampler bind group
+            // TODO share sampler across calls
+            bg_entries[0]         = {};
+            bg_entries[0].binding = 0;
+            bg_entries[0].sampler = generator->sampler;
+
+            // source texture bind group
+            bg_entries[1]             = {};
+            bg_entries[1].binding     = 1;
+            bg_entries[1].textureView = views[target_mip - 1];
+
+            WGPUBindGroupDescriptor bg_desc = {};
+            bg_desc.layout                  = bind_group_layout;
+            bg_desc.entryCount              = ARRAY_LENGTH(bg_entries);
+            bg_desc.entries                 = bg_entries;
+
+            uint32_t bind_group_index
+              = array_layer * (mip_level_count - 1) + i - 1;
+            bind_groups[bind_group_index]
+              = wgpuDeviceCreateBindGroup(ctx->device, &bg_desc);
+
+            wgpuRenderPassEncoderSetPipeline(pass_encoder, pipeline);
+            wgpuRenderPassEncoderSetBindGroup(
+              pass_encoder, 0, bind_groups[bind_group_index], 0, NULL);
+            wgpuRenderPassEncoderDraw(pass_encoder, 3, 1, 0, 0);
+            wgpuRenderPassEncoderEnd(pass_encoder);
+
+            WGPU_RELEASE_RESOURCE(RenderPassEncoder, pass_encoder)
+        }
+    }
+
+    // If we didn't render to the source texture, finish by copying the mip
+    // results from the temporary mipmap texture to the source.
+    if (!render_to_source) {
+        // TODO off by 1 somewhere, last mip level is not copied
+        // for (u32 i = 1; i < texture_desc->mipLevelCount - 1; ++i) {
+        log_debug("target mip level count %d\n", texture_desc->mipLevelCount);
+        for (u32 i = 1; i < texture_desc->mipLevelCount - 2; ++i) {
+
+            // log_debug("Copying mip level %d with sizes %d, %d\n", i,
+            //           mip_level_size.width, mip_level_size.height);
+
+            WGPUImageCopyTexture mipCopySrc = {};
+            mipCopySrc.texture              = mip_texture;
+            mipCopySrc.mipLevel             = i - 1;
+
+            WGPUImageCopyTexture mipCopyDst = {};
+            mipCopyDst.texture              = texture;
+            mipCopyDst.mipLevel             = i;
+
+            wgpuCommandEncoderCopyTextureToTexture(
+              cmd_encoder, &mipCopySrc, &mipCopyDst, &mip_level_size //
+            );
+
+            mip_level_size.width  = ceil(mip_level_size.width / 2.0f);
+            mip_level_size.height = ceil(mip_level_size.height / 2.0f);
+        }
+    }
+
+    WGPUCommandBuffer command_buffer
+      = wgpuCommandEncoderFinish(cmd_encoder, NULL);
+    ASSERT(command_buffer != NULL);
+    WGPU_RELEASE_RESOURCE(CommandEncoder, cmd_encoder)
+
+    // Sumbit commmand buffer
+    wgpuQueueSubmit(ctx->queue, 1, &command_buffer);
+
+    { // cleanup
+        WGPU_RELEASE_RESOURCE(CommandBuffer, command_buffer)
+
+        if (!render_to_source) {
+            WGPU_RELEASE_RESOURCE(Texture, mip_texture);
+        }
+
+        for (uint32_t i = 0; i < views_count; ++i) {
+            WGPU_RELEASE_RESOURCE(TextureView, views[i]);
+        }
+        FREE_ARRAY(WGPUTextureView, views, views_count);
+
+        for (uint32_t i = 0; i < bind_group_count; ++i) {
+            WGPU_RELEASE_RESOURCE(BindGroup, bind_groups[i]);
+        }
+        FREE_ARRAY(WGPUBindGroup, bind_groups, bind_group_count);
+    }
+
+    return texture;
+}
+
+// ============================================================================
 // Texture
 // ============================================================================
 
 void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
-                           const char* filename)
+                           const char* filename, bool genMipMaps)
 {
     ASSERT(texture->texture == NULL);
 
     i32 width = 0, height = 0;
-    // Force loading 4 channel images to 3 channel by stb becasue Dawn doesn't
-    // support 3 channel formats currently. The group is discussing on whether
-    // webgpu shoud support 3 channel format.
+    // Force loading 4 channel images to 3 channel by stb becasue Dawn
+    // doesn't support 3 channel formats currently. The group is discussing
+    // on whether webgpu shoud support 3 channel format.
     // https://github.com/gpuweb/gpuweb/issues/66#issuecomment-410021505
-    i32 read_comps    = 4;
+    i32 read_comps    = 0;
     i32 desired_comps = STBI_rgb_alpha; // force 4 channels
 
     stbi_set_flip_vertically_on_load(true);
@@ -728,8 +1091,8 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
     texture->height = height;
     texture->depth  = 1;
 
-    // TODO: add mip-mapping
-    texture->mip_level_count = 1;
+    // default always gen mipmaps
+    texture->mip_level_count = genMipMaps ? mipLevelCount(width, height) : 1u;
 
     // TODO: support compressed texture formats
     texture->format    = WGPUTextureFormat_RGBA8Unorm;
@@ -737,8 +1100,10 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
 
     // create texture
     WGPUTextureDescriptor textureDesc = {};
+    // render attachment usage is used for mip map generation
     textureDesc.usage
       = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    // | WGPUTextureUsage_RenderAttachment;
     textureDesc.dimension       = texture->dimension;
     textureDesc.size            = { (u32)width, (u32)height, 1 };
     textureDesc.format          = texture->format;
@@ -761,12 +1126,12 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
             0,
             0,
         }; // equivalent of the offset argument of Queue::writeBuffer
-        destination.aspect
-          = WGPUTextureAspect_All; // only relevant for depth/Stencil textures
+        destination.aspect = WGPUTextureAspect_All; // only relevant for
+                                                    // depth/Stencil textures
 
         WGPUTextureDataLayout source = {};
         source.offset       = 0; // where to start reading from the cpu buffer
-        source.bytesPerRow  = 4 * textureDesc.size.width;
+        source.bytesPerRow  = desired_comps * textureDesc.size.width;
         source.rowsPerImage = textureDesc.size.height;
 
         const u64 dataSize = textureDesc.size.width * textureDesc.size.height
@@ -775,6 +1140,16 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
 
         wgpuQueueWriteTexture(ctx->queue, &destination, pixel_data, dataSize,
                               &source, &textureDesc.size);
+    }
+
+    // generate mipmaps
+    if (genMipMaps) {
+        if (mipMapGenerator.ctx == NULL)
+            MipMapGenerator::init(ctx, &mipMapGenerator);
+
+        // generate mipmaps
+        MipMapGenerator::generate(&mipMapGenerator, texture->texture,
+                                  &textureDesc);
     }
 
     // free pixel data
@@ -796,12 +1171,16 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
     samplerDesc.addressModeU          = WGPUAddressMode_Repeat;
     samplerDesc.addressModeV          = WGPUAddressMode_Repeat;
     samplerDesc.addressModeW          = WGPUAddressMode_Repeat;
-    samplerDesc.minFilter             = WGPUFilterMode_Linear;
-    samplerDesc.magFilter             = WGPUFilterMode_Linear;
-    samplerDesc.mipmapFilter          = WGPUMipmapFilterMode_Linear;
-    samplerDesc.lodMinClamp           = 0.0f;
-    samplerDesc.lodMaxClamp           = (f32)texture->mip_level_count;
-    samplerDesc.maxAnisotropy         = 1; // TODO: try max of 16
+
+    // TODO: make filtering configurable
+    samplerDesc.minFilter    = WGPUFilterMode_Linear;
+    samplerDesc.magFilter    = WGPUFilterMode_Linear;
+    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Linear;
+    // samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+
+    samplerDesc.lodMinClamp   = 0.0f;
+    samplerDesc.lodMaxClamp   = (f32)texture->mip_level_count;
+    samplerDesc.maxAnisotropy = 1; // TODO: try max of 16
 
     texture->sampler = wgpuDeviceCreateSampler(ctx->device, &samplerDesc);
 };
@@ -839,33 +1218,79 @@ void Material::init(GraphicsContext* ctx, Material* material,
     bufferDesc.usage        = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Uniform;
     material->uniformBuffer = wgpuDeviceCreateBuffer(ctx->device, &bufferDesc);
 
-    // uniform buffer bindgroup entry
-    WGPUBindGroupEntry uniformBinding = {};
-    uniformBinding.binding            = 0; // @binding(0)
-    uniformBinding.offset             = 0;
-    uniformBinding.buffer             = material->uniformBuffer;
-    uniformBinding.size               = bufferDesc.size;
+    // build bind group entries
+    {
+        // uniform buffer bindgroup entry
+        WGPUBindGroupEntry* uniformBinding = &material->entries[0];
+        *uniformBinding                    = {};
+        uniformBinding->binding            = 0; // @binding(0)
+        uniformBinding->offset             = 0;
+        uniformBinding->buffer             = material->uniformBuffer;
+        uniformBinding->size               = bufferDesc.size;
 
-    // texture bindgroup entry
-    WGPUBindGroupEntry textureBinding = {};
-    textureBinding.binding            = 1; // @binding(1)
-    textureBinding.textureView        = texture->view;
+        // texture bindgroup entry
+        WGPUBindGroupEntry* textureBinding = &material->entries[1];
+        *textureBinding                    = {};
+        textureBinding->binding            = 1; // @binding(1)
+        textureBinding->textureView        = texture->view;
 
-    // sampler bindgroup entry
-    WGPUBindGroupEntry samplerBinding = {};
-    samplerBinding.binding            = 2; // @binding(2)
-    samplerBinding.sampler            = texture->sampler;
-
-    WGPUBindGroupEntry bindGroupEntries[]
-      = { uniformBinding, textureBinding, samplerBinding };
+        // sampler bindgroup entry
+        WGPUBindGroupEntry* samplerBinding = &material->entries[2];
+        *samplerBinding                    = {};
+        samplerBinding->binding            = 2; // @binding(2)
+        samplerBinding->sampler            = texture->sampler;
+    }
 
     // A bind group contains one or multiple bindings
-    WGPUBindGroupDescriptor bindGroupDesc = {};
-    bindGroupDesc.layout     = pipeline->bindGroupLayouts[PER_MATERIAL_GROUP];
-    bindGroupDesc.entries    = bindGroupEntries;
-    bindGroupDesc.entryCount = ARRAY_LENGTH(bindGroupEntries);
-    ASSERT(bindGroupDesc.entryCount == 3);
+    material->desc            = {};
+    material->desc.layout     = pipeline->bindGroupLayouts[PER_MATERIAL_GROUP];
+    material->desc.entries    = material->entries;
+    material->desc.entryCount = ARRAY_LENGTH(material->entries);
+    ASSERT(material->desc.entryCount == 3);
 
     material->bindGroup
-      = wgpuDeviceCreateBindGroup(ctx->device, &bindGroupDesc);
+      = wgpuDeviceCreateBindGroup(ctx->device, &material->desc);
+}
+
+/// @brief Bind a texture to a material (replaces previous texture)
+void Material::setTexture(GraphicsContext* ctx, Material* material,
+                          Texture* texture)
+{
+    // don't release previous texture as it may be used by other materials
+
+    // set new texture
+    material->texture = texture;
+
+    // update bind group entries
+    {
+        // uniform buffer bindgroup entry
+        // WGPUBindGroupEntry* uniformBinding = &material->entries[0];
+        // *uniformBinding = {};
+        // uniformBinding->binding            = 0; // @binding(0)
+        // uniformBinding->offset             = 0;
+        // uniformBinding->buffer             = material->uniformBuffer;
+        // uniformBinding->size               = bufferDesc.size;
+
+        // texture bindgroup entry
+        material->entries[1].textureView = texture->view;
+
+        // sampler bindgroup entry
+        material->entries[2].sampler = texture->sampler;
+    }
+
+    // release old bindgroup
+    wgpuBindGroupRelease(material->bindGroup);
+
+    // create new bindgroup
+    material->bindGroup
+      = wgpuDeviceCreateBindGroup(ctx->device, &material->desc);
+}
+
+void Material::release(Material* material)
+{
+    wgpuBindGroupRelease(material->bindGroup);
+
+    // release buffer (TODO create uniform buffer struct)
+    wgpuBufferDestroy(material->uniformBuffer);
+    wgpuBufferRelease(material->uniformBuffer);
 }

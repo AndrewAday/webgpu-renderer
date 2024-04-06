@@ -190,7 +190,7 @@ struct Texture {
     WGPUSampler sampler;
 
     static void initFromFile(GraphicsContext* ctx, Texture* texture,
-                             const char* filename);
+                             const char* filename, bool genMipMaps);
 
     static void release(Texture* texture);
 };
@@ -208,8 +208,17 @@ struct Material {
     // glm::vec4 color;
     Texture* texture; // multiple materials can share same texture
 
+    // bind group entries
+    WGPUBindGroupEntry entries[3]; // uniforms, texture, sampler
+    WGPUBindGroupDescriptor desc;
+
     // TODO: store MaterialUniforms struct (struct inheritance, like Obj)
 
     static void init(GraphicsContext* ctx, Material* material,
                      RenderPipeline* pipeline, Texture* texture);
+
+    static void setTexture(GraphicsContext* ctx, Material* material,
+                           Texture* texture);
+
+    static void release(Material* material);
 };

@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cstring>
 
 #include "memory.h"
 
@@ -15,5 +16,9 @@ void* reallocate(void* pointer, i64 oldSize, i64 newSize)
 
     void* result = realloc(pointer, newSize);
     if (result == NULL) exit(1); // out of memory
+
+    // zero out the new memory
+    if (oldSize == 0) memset(result, 0, newSize);
+
     return result;
 }

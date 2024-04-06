@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <unordered_map>
 #include <vector>
 
 #include <GLFW/glfw3.h>
@@ -59,6 +60,7 @@ struct Spherical {
 // Original Arcball camera paper?
 // https://www.talisman.org/~erlkonig/misc/shoemake92-arcball.pdf
 
+glm::vec3 arcOrigin       = glm::vec3(0.0f); // origin of the arcball camera
 Spherical cameraSpherical = { 6.0f, 0.0f, 0.0f };
 bool mouseDown            = false;
 f64 mouseX                = 0.0;
@@ -136,6 +138,38 @@ static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
     mouseY = ypos;
 }
 
+struct KeyState {
+    i32 key;
+    bool pressed;
+};
+static std::unordered_map<i32, bool> keyStates;
+
+static void keyCallback(GLFWwindow* window, int key, int scancode, int action,
+                        int mods)
+{
+    UNUSED_VAR(window);
+    UNUSED_VAR(scancode);
+    UNUSED_VAR(mods);
+
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    }
+
+    if (action == GLFW_PRESS) {
+        keyStates[key] = true;
+    } else if (action == GLFW_RELEASE) {
+        keyStates[key] = false;
+    }
+
+    // camera controls
+    if (keyStates[GLFW_KEY_W]) arcOrigin.z -= 0.1f;
+    if (keyStates[GLFW_KEY_S]) arcOrigin.z += 0.1f;
+    if (keyStates[GLFW_KEY_A]) arcOrigin.x -= 0.1f;
+    if (keyStates[GLFW_KEY_D]) arcOrigin.x += 0.1f;
+    if (keyStates[GLFW_KEY_Q]) arcOrigin.y += 0.1f;
+    if (keyStates[GLFW_KEY_E]) arcOrigin.y -= 0.1f;
+}
+
 std::vector<Entity*> renderables;
 
 int main(int, char**)
@@ -178,6 +212,7 @@ int main(int, char**)
         glfwSetMouseButtonCallback(window, mouseButtonCallback);
         glfwSetScrollCallback(window, scrollCallback);
         glfwSetCursorPosCallback(window, cursorPositionCallback);
+        glfwSetKeyCallback(window, keyCallback);
     }
 
     GraphicsContext g_ctx = {};
@@ -202,7 +237,8 @@ int main(int, char**)
     Entity objEntity = {};
     Entity::init(&objEntity, &g_ctx, pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
     objEntity.pos = glm::vec3(0.0, 1.0, 0.0);
-    objEntity.sca = glm::vec3(.8f);
+    // objEntity.sca = glm::vec3(.8f);
+    Entity::setVertices(&objEntity, &planeVertices, &g_ctx);
 
     renderables.push_back(&planeEntity);
     renderables.push_back(&objEntity);
@@ -249,21 +285,36 @@ int main(int, char**)
 
         fast_obj_destroy(mesh);
 
-        Entity::setVertices(&objEntity, &vertices, &g_ctx);
+        // Entity::setVertices(&objEntity, &vertices, &g_ctx);
         // Entity::setVertices(&planeEntity, &vertices, &g_ctx);
     }
 
     // initialize texture
     Texture texture = {};
-    Texture::initFromFile(&g_ctx, &texture, "assets/uv.png");
+    Texture::initFromFile(&g_ctx, &texture, "assets/uv.png", true);
+
+    Texture noMipTexture = {};
+    Texture::initFromFile(&g_ctx, &noMipTexture, "assets/uv.png", false);
+
+    Texture brickTexture = {};
+    Texture::initFromFile(&g_ctx, &brickTexture, "assets/brickwall_albedo.png",
+                          true);
     // Texture::initFromFile(&g_ctx, &texture, "foo");
 
     // initialize Material
     Material material = {};
     Material::init(&g_ctx, &material, &pipeline, &texture);
 
+    Material noMipMaterial = {};
+    Material::init(&g_ctx, &noMipMaterial, &pipeline, &noMipTexture);
+
+    // Material::setTexture(&g_ctx, &material, &brickTexture);
+
     // main loop
+    u64 fc = 0;
     while (!glfwWindowShouldClose(window)) {
+        fc++;
+
         // Check whether the user clicked on the close button (and any other
         // mouse/key event, which we don't use so far)
         glfwPollEvents();
@@ -272,16 +323,23 @@ int main(int, char**)
           = GraphicsContext::prepareFrame(&g_ctx);
 
         // Update
+        if (fc % 60 == 0) {
+            material.texture == &texture ?
+              Material::setTexture(&g_ctx, &material, &noMipTexture) :
+              Material::setTexture(&g_ctx, &material, &texture);
+        }
+
         {
             // Entity::rotateOnLocalAxis(&planeEntity,             //
             //                           glm::vec3(0.0, 1.0, 0.0), //
             //                           0.01f);                   //
             Entity::rotateOnLocalAxis(&objEntity, glm::vec3(0.0, 1.0, 0.0),
                                       -0.01f);
-            cameraEntity.pos = Spherical::toCartesian(cameraSpherical);
-            // camera lookat origin
+            cameraEntity.pos
+              = arcOrigin + Spherical::toCartesian(cameraSpherical);
+            // camera lookat arcball origin
             cameraEntity.rot = glm::conjugate(
-              glm::toQuat(glm::lookAt(cameraEntity.pos, glm::vec3(0), VEC_UP)));
+              glm::toQuat(glm::lookAt(cameraEntity.pos, arcOrigin, VEC_UP)));
         }
 
         // draw
