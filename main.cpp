@@ -94,6 +94,13 @@ static void showFPS(GLFWwindow* window)
 #undef WINDOW_TITLE_MAX_LENGTH
 }
 
+static void onWindowResize(GLFWwindow* window, int width, int height)
+{
+    // std::cout << "Window resized: " << width << ", " << height << std::endl;
+    GraphicsContext* ctx = (GraphicsContext*)glfwGetWindowUserPointer(window);
+    GraphicsContext::resize(ctx, width, height);
+}
+
 static void mouseButtonCallback(GLFWwindow* window, int button, int action,
                                 int mods)
 {
@@ -198,7 +205,7 @@ int main(int, char**)
     // Create the window
     glfwWindowHint(GLFW_CLIENT_API,
                    GLFW_NO_API); // don't create an OpenGL context
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // don't allow resizing
+    // glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // don't allow resizing
     GLFWwindow* window
       = glfwCreateWindow(640, 480, "WebGPU-Renderer", NULL, NULL);
 
@@ -217,6 +224,15 @@ int main(int, char**)
 
     GraphicsContext g_ctx = {};
     GraphicsContext::init(&g_ctx, window);
+
+    { // window resize callback
+
+        // Set the user pointer to be "this"
+        glfwSetWindowUserPointer(window, &g_ctx);
+
+        // Add the raw `onWindowResize` as resize callback
+        glfwSetFramebufferSizeCallback(window, onWindowResize);
+    }
 
     // initialize render pipeline
     RenderPipeline pipeline = {};
@@ -237,15 +253,16 @@ int main(int, char**)
     Entity objEntity = {};
     Entity::init(&objEntity, &g_ctx, pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
     objEntity.pos = glm::vec3(0.0, 1.0, 0.0);
-    // objEntity.sca = glm::vec3(.8f);
-    Entity::setVertices(&objEntity, &planeVertices, &g_ctx);
+    objEntity.sca = glm::vec3(1.8f);
+    // Entity::setVertices(&objEntity, &planeVertices, &g_ctx);
 
     renderables.push_back(&planeEntity);
     renderables.push_back(&objEntity);
 
     {
         // fastObjMesh* mesh = fast_obj_read("assets/suzanne.obj");
-        fastObjMesh* mesh = fast_obj_read("assets/cube.obj");
+        // fastObjMesh* mesh = fast_obj_read("assets/cube.obj");
+        fastObjMesh* mesh = fast_obj_read("assets/fourareen/fourareen.obj");
         // print mesh data
         printf(
           "Loaded mesh\n"
@@ -285,13 +302,15 @@ int main(int, char**)
 
         fast_obj_destroy(mesh);
 
-        // Entity::setVertices(&objEntity, &vertices, &g_ctx);
+        Entity::setVertices(&objEntity, &vertices, &g_ctx);
         // Entity::setVertices(&planeEntity, &vertices, &g_ctx);
     }
 
     // initialize texture
     Texture texture = {};
-    Texture::initFromFile(&g_ctx, &texture, "assets/uv.png", true);
+    // Texture::initFromFile(&g_ctx, &texture, "assets/uv.png", true);
+    Texture::initFromFile(&g_ctx, &texture,
+                          "assets/fourareen/fourareen2K_albedo.jpg", true);
 
     Texture noMipTexture = {};
     Texture::initFromFile(&g_ctx, &noMipTexture, "assets/uv.png", false);
@@ -323,11 +342,11 @@ int main(int, char**)
           = GraphicsContext::prepareFrame(&g_ctx);
 
         // Update
-        if (fc % 60 == 0) {
-            material.texture == &texture ?
-              Material::setTexture(&g_ctx, &material, &noMipTexture) :
-              Material::setTexture(&g_ctx, &material, &texture);
-        }
+        // if (fc % 60 == 0) {
+        //     material.texture == &texture ?
+        //       Material::setTexture(&g_ctx, &material, &noMipTexture) :
+        //       Material::setTexture(&g_ctx, &material, &texture);
+        // }
 
         {
             // Entity::rotateOnLocalAxis(&planeEntity,             //
@@ -350,8 +369,14 @@ int main(int, char**)
             // set frame uniforms
             f32 time                    = (f32)glfwGetTime();
             FrameUniforms frameUniforms = {};
+
+            // TODO: store in window context global state
+            i32 width, height;
+            glfwGetWindowSize(window, &width, &height);
+            f32 aspect = (f32)width / (f32)height;
             frameUniforms.projectionMat
-              = Entity::projectionMatrix(&cameraEntity);
+              = Entity::projectionMatrix(&cameraEntity, aspect);
+
             frameUniforms.viewMat = Entity::viewMatrix(&cameraEntity);
             frameUniforms.projViewMat
               = frameUniforms.projectionMat * frameUniforms.viewMat;
@@ -447,3 +472,39 @@ int main(int, char**)
 
     return 0;
 }
+
+/*
+Refactor ideas:
+
+- wgpu context (global state)
+- window context (global state)
+- example context
+
+Application runs examples, provides event handles for:
+- taking commmand line args
+- example_settings;
+  - window config;
+    - width
+    - height
+    - title
+    - resizable
+    - fullscreen
+  - time management
+    - FPS
+    - delta time
+    - time since start
+    - timer speed
+  - example name
+- onInit()
+- onFrame() / onUpdate() / onRender() / onDraw()
+  - are update() and render() separate?
+- onRelease() / onDestroy() / onExit()
+- window resize callback
+- Input callbacks
+  - mouse
+    - cursor position
+    - button press
+    - scroll
+  - keyboard
+
+*/

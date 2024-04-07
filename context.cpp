@@ -132,6 +132,83 @@ static void on_device_error(WGPUErrorType type, char const* message,
 #endif
 };
 
+static bool createSwapChain(GraphicsContext* context, u32 width, u32 height)
+{
+    // ensure previous swap chain has been released
+    ASSERT(context->swapChain == NULL);
+
+    WGPUSwapChainDescriptor swap_chain_desc = {
+        NULL,                              // nextInChain
+        "The default swap chain",          // label
+        WGPUTextureUsage_RenderAttachment, // usage
+        context->swapChainFormat,          // format
+        width,                             // width
+        height,                            // height
+        WGPUPresentMode_Fifo,              // presentMode
+    };
+    context->swapChain = wgpuDeviceCreateSwapChain(
+      context->device, context->surface, &swap_chain_desc);
+
+    if (!context->swapChain) return false;
+    return true;
+}
+
+static void createDepthTexture(GraphicsContext* context, u32 width, u32 height)
+{
+    // Ensure that the depth texture is not already created or has been released
+    ASSERT(context->depthTexture == NULL);
+    ASSERT(context->depthTextureView == NULL);
+
+    // Depth texture
+    WGPUTextureDescriptor depthTextureDesc = {};
+    // only support one format for now
+    WGPUTextureFormat depthTextureFormat
+      = WGPUTextureFormat_Depth24PlusStencil8;
+    depthTextureDesc.usage         = WGPUTextureUsage_RenderAttachment;
+    depthTextureDesc.dimension     = WGPUTextureDimension_2D;
+    depthTextureDesc.size          = { width, height, 1 };
+    depthTextureDesc.format        = depthTextureFormat;
+    depthTextureDesc.mipLevelCount = 1;
+    depthTextureDesc.sampleCount   = 1;
+    context->depthTexture
+      = wgpuDeviceCreateTexture(context->device, &depthTextureDesc);
+    ASSERT(context->depthTexture != NULL);
+
+    // Create the view of the depth texture manipulated by the rasterizer
+    WGPUTextureViewDescriptor depthTextureViewDesc = {};
+    depthTextureViewDesc.format                    = depthTextureFormat;
+    depthTextureViewDesc.dimension       = WGPUTextureViewDimension_2D;
+    depthTextureViewDesc.baseMipLevel    = 0;
+    depthTextureViewDesc.mipLevelCount   = 1;
+    depthTextureViewDesc.baseArrayLayer  = 0;
+    depthTextureViewDesc.arrayLayerCount = 1;
+    depthTextureViewDesc.aspect          = WGPUTextureAspect_All;
+    context->depthTextureView
+      = wgpuTextureCreateView(context->depthTexture, &depthTextureViewDesc);
+    ASSERT(context->depthTextureView != NULL);
+
+    // defaults for render pass depth/stencil attachment
+    context->depthStencilAttachment.view = context->depthTextureView;
+    // The initial value of the depth buffer, meaning "far"
+    context->depthStencilAttachment.depthClearValue = 1.0f;
+    // Operation settings comparable to the color attachment
+    context->depthStencilAttachment.depthLoadOp  = WGPULoadOp_Clear;
+    context->depthStencilAttachment.depthStoreOp = WGPUStoreOp_Store;
+    // we could turn off writing to the depth buffer globally here
+    context->depthStencilAttachment.depthReadOnly = false;
+
+    // Stencil setup, mandatory but unused
+    context->depthStencilAttachment.stencilClearValue = 0;
+#ifdef WEBGPU_BACKEND_WGPU
+    context->depthStencilAttachment.stencilLoadOp  = WGPULoadOp_Clear;
+    context->depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Store;
+#else
+    context->depthStencilAttachment.stencilLoadOp  = WGPULoadOp_Undefined;
+    context->depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Undefined;
+#endif
+    context->depthStencilAttachment.stencilReadOnly = false;
+}
+
 bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
 {
     WGPUInstanceDescriptor instanceDesc = {};
@@ -140,6 +217,7 @@ bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
 
     context->surface = glfwGetWGPUSurface(context->instance, window);
     if (!context->surface) return false;
+    // context->window = window;
 
     WGPURequestAdapterOptions adapterOpts = {
         NULL,                                // nextInChain
@@ -175,73 +253,18 @@ bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
 
     context->swapChainFormat
       = wgpuSurfaceGetPreferredFormat(context->surface, context->adapter);
-    WGPUSwapChainDescriptor swap_chain_desc = {
-        NULL,                              // nextInChain
-        "The default swap chain",          // label
-        WGPUTextureUsage_RenderAttachment, // usage
-        context->swapChainFormat,          // format
-        (u32)window_width,                 // width
-        (u32)window_height,                // height
-        WGPUPresentMode_Fifo,              // presentMode
-    };
-    context->swapChain = wgpuDeviceCreateSwapChain(
-      context->device, context->surface, &swap_chain_desc);
-    if (!context->swapChain) return false;
 
-    // Depth texture
-    WGPUTextureDescriptor depthTextureDesc = {};
-    // only support one format for now
-    WGPUTextureFormat depthTextureFormat
-      = WGPUTextureFormat_Depth24PlusStencil8;
-    depthTextureDesc.usage     = WGPUTextureUsage_RenderAttachment;
-    depthTextureDesc.dimension = WGPUTextureDimension_2D;
-    depthTextureDesc.size      = { (u32)window_width, (u32)window_height, 1 };
-    depthTextureDesc.format    = depthTextureFormat;
-    depthTextureDesc.mipLevelCount = 1;
-    depthTextureDesc.sampleCount   = 1;
-    context->depthTexture
-      = wgpuDeviceCreateTexture(context->device, &depthTextureDesc);
-    ASSERT(context->depthTexture != NULL);
+    // Create the swap chain
+    if (!createSwapChain(context, window_width, window_height)) return false;
 
-    // Create the view of the depth texture manipulated by the rasterizer
-    WGPUTextureViewDescriptor depthTextureViewDesc = {};
-    depthTextureViewDesc.format                    = depthTextureFormat;
-    depthTextureViewDesc.dimension       = WGPUTextureViewDimension_2D;
-    depthTextureViewDesc.baseMipLevel    = 0;
-    depthTextureViewDesc.mipLevelCount   = 1;
-    depthTextureViewDesc.baseArrayLayer  = 0;
-    depthTextureViewDesc.arrayLayerCount = 1;
-    depthTextureViewDesc.aspect          = WGPUTextureAspect_All;
-    context->depthTextureView
-      = wgpuTextureCreateView(context->depthTexture, &depthTextureViewDesc);
-    ASSERT(context->depthTextureView != NULL);
+    // Create depth texture and view
+    createDepthTexture(context, window_width, window_height);
 
     // defaults for render pass color attachment
     context->colorAttachment            = {};
     context->colorAttachment.loadOp     = WGPULoadOp_Clear;
     context->colorAttachment.storeOp    = WGPUStoreOp_Store;
     context->colorAttachment.clearValue = WGPUColor{ 0.0f, 0.0f, 0.0f, 1.0f };
-
-    // defaults for render pass depth/stencil attachment
-    context->depthStencilAttachment.view = context->depthTextureView;
-    // The initial value of the depth buffer, meaning "far"
-    context->depthStencilAttachment.depthClearValue = 1.0f;
-    // Operation settings comparable to the color attachment
-    context->depthStencilAttachment.depthLoadOp  = WGPULoadOp_Clear;
-    context->depthStencilAttachment.depthStoreOp = WGPUStoreOp_Store;
-    // we could turn off writing to the depth buffer globally here
-    context->depthStencilAttachment.depthReadOnly = false;
-
-    // Stencil setup, mandatory but unused
-    context->depthStencilAttachment.stencilClearValue = 0;
-#ifdef WEBGPU_BACKEND_WGPU
-    context->depthStencilAttachment.stencilLoadOp  = WGPULoadOp_Clear;
-    context->depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Store;
-#else
-    context->depthStencilAttachment.stencilLoadOp  = WGPULoadOp_Undefined;
-    context->depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Undefined;
-#endif
-    context->depthStencilAttachment.stencilReadOnly = false;
 
     // render pass descriptor
     context->renderPassDesc.label                = "My render pass";
@@ -292,6 +315,23 @@ void GraphicsContext::presentFrame(GraphicsContext* ctx)
     wgpuSwapChainPresent(ctx->swapChain);
 }
 
+void GraphicsContext::resize(GraphicsContext* ctx, u32 width, u32 height)
+{
+
+    // terminate depth buffer
+    WGPU_RELEASE_RESOURCE(TextureView, ctx->depthTextureView);
+    WGPU_DESTROY_RESOURCE(Texture, ctx->depthTexture);
+    WGPU_RELEASE_RESOURCE(Texture, ctx->depthTexture);
+
+    // terminate swap chain
+    WGPU_RELEASE_RESOURCE(SwapChain, ctx->swapChain);
+
+    // recreate swap chain
+    createSwapChain(ctx, width, height);
+    // recreate depth texture
+    createDepthTexture(ctx, width, height);
+}
+
 void GraphicsContext::release(GraphicsContext* ctx)
 {
     wgpuSwapChainRelease(ctx->swapChain);
@@ -302,8 +342,8 @@ void GraphicsContext::release(GraphicsContext* ctx)
 
     // textures
     wgpuTextureViewRelease(ctx->depthTextureView);
-    wgpuTextureRelease(ctx->depthTexture);
     wgpuTextureDestroy(ctx->depthTexture);
+    wgpuTextureRelease(ctx->depthTexture);
 }
 
 void VertexBuffer::init(GraphicsContext* ctx, VertexBuffer* buf,
@@ -827,7 +867,7 @@ WGPURenderPipeline MipMapGenerator::getPipeline(MipMapGenerator* generator,
     multisampleState.alphaToCoverageEnabled = false;
 
     WGPURenderPipelineDescriptor pipelineDesc = {};
-    // layout: auto
+    // layout: defaults to `auto`
     pipelineDesc.label       = "mipmap blit render pipeline";
     pipelineDesc.primitive   = primitiveStateDesc;
     pipelineDesc.vertex      = generator->vertexState;
@@ -858,6 +898,9 @@ WGPUTexture MipMapGenerator::generate(MipMapGenerator* generator,
 {
     WGPURenderPipeline pipeline
       = MipMapGenerator::getPipeline(generator, texture_desc->format);
+
+    log_trace("Generating %d mip levels for texture %s",
+              texture_desc->mipLevelCount, texture_desc->label);
 
     if (texture_desc->dimension == WGPUTextureDimension_3D
         || texture_desc->dimension == WGPUTextureDimension_1D) {
@@ -998,7 +1041,6 @@ WGPUTexture MipMapGenerator::generate(MipMapGenerator* generator,
     // If we didn't render to the source texture, finish by copying the mip
     // results from the temporary mipmap texture to the source.
     if (!render_to_source) {
-        log_debug("target mip level count %d\n", texture_desc->mipLevelCount);
         for (u32 i = 1; i < texture_desc->mipLevelCount; ++i) {
 
             // log_debug("Copying to mip level %d with sizes %d, %d\n", i,
@@ -1112,7 +1154,7 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
     textureDesc.sampleCount     = 1;
     textureDesc.viewFormatCount = 0;
     textureDesc.viewFormats     = NULL;
-    // textureDesc.label                  = "Texture";
+    textureDesc.label           = filename;
 
     texture->texture = wgpuDeviceCreateTexture(ctx->device, &textureDesc);
     ASSERT(texture->texture != NULL);
@@ -1189,14 +1231,14 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
 void Texture::release(Texture* texture)
 {
     // release textureview
-    wgpuTextureViewRelease(texture->view);
+    WGPU_RELEASE_RESOURCE(TextureView, texture->view);
 
     // release texture
-    wgpuTextureDestroy(texture->texture);
-    wgpuTextureRelease(texture->texture);
+    WGPU_DESTROY_RESOURCE(Texture, texture->texture)
+    WGPU_RELEASE_RESOURCE(Texture, texture->texture);
 
     // release sampler
-    wgpuSamplerRelease(texture->sampler);
+    WGPU_RELEASE_RESOURCE(Sampler, texture->sampler)
 }
 
 // ============================================================================

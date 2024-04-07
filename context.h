@@ -11,6 +11,10 @@
         Name = NULL;                                                           \
     }
 
+#define WGPU_DESTROY_RESOURCE(Type, Name)                                      \
+    ASSERT(Name != NULL);                                                      \
+    wgpu##Type##Destroy(Name);
+
 // void printBackend();
 // void printAdapterInfo(WGPUAdapter adapter);
 
@@ -52,6 +56,7 @@ struct GraphicsContext {
     static bool init(GraphicsContext* context, GLFWwindow* window);
     static WGPURenderPassEncoder prepareFrame(GraphicsContext* ctx);
     static void presentFrame(GraphicsContext* ctx);
+    static void resize(GraphicsContext* ctx, u32 width, u32 height);
     static void release(GraphicsContext* ctx);
 };
 

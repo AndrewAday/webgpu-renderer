@@ -32,7 +32,6 @@ struct Entity {
 
     // camera
     f32 fovDegrees;
-    f32 aspect;
     f32 nearPlane;
     f32 farPlane;
 
@@ -56,7 +55,7 @@ struct Entity {
 
     static glm::mat4 modelMatrix(Entity* entity); // TODO cache
     static glm::mat4 viewMatrix(Entity* entity);
-    static glm::mat4 projectionMatrix(Entity* entity);
+    static glm::mat4 projectionMatrix(Entity* entity, f32 aspect);
 
     static void rotateOnLocalAxis(Entity* entity, glm::vec3 axis, f32 deg);
     static void rotateOnWorldAxis(Entity* entity, glm::vec3 axis, f32 deg);

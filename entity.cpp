@@ -20,7 +20,6 @@ void Entity::init(Entity* entity, GraphicsContext* ctx,
 
     // init camera params
     entity->fovDegrees = 45.0f;
-    entity->aspect     = 1.0f; // TODO get from window in g_ctx
     entity->nearPlane  = 0.1f;
     entity->farPlane   = 1000.0f;
 }
@@ -59,9 +58,9 @@ glm::mat4 Entity::viewMatrix(Entity* entity)
     return invR * invT;
 }
 
-glm::mat4 Entity::projectionMatrix(Entity* entity)
+glm::mat4 Entity::projectionMatrix(Entity* entity, f32 aspect)
 {
-    return glm::perspective(glm::radians(entity->fovDegrees), entity->aspect,
+    return glm::perspective(glm::radians(entity->fovDegrees), aspect,
                             entity->nearPlane, entity->farPlane);
 }
 
