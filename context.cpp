@@ -998,12 +998,10 @@ WGPUTexture MipMapGenerator::generate(MipMapGenerator* generator,
     // If we didn't render to the source texture, finish by copying the mip
     // results from the temporary mipmap texture to the source.
     if (!render_to_source) {
-        // TODO off by 1 somewhere, last mip level is not copied
-        // for (u32 i = 1; i < texture_desc->mipLevelCount - 1; ++i) {
         log_debug("target mip level count %d\n", texture_desc->mipLevelCount);
-        for (u32 i = 1; i < texture_desc->mipLevelCount - 2; ++i) {
+        for (u32 i = 1; i < texture_desc->mipLevelCount; ++i) {
 
-            // log_debug("Copying mip level %d with sizes %d, %d\n", i,
+            // log_debug("Copying to mip level %d with sizes %d, %d\n", i,
             //           mip_level_size.width, mip_level_size.height);
 
             WGPUImageCopyTexture mipCopySrc = {};
@@ -1018,8 +1016,11 @@ WGPUTexture MipMapGenerator::generate(MipMapGenerator* generator,
               cmd_encoder, &mipCopySrc, &mipCopyDst, &mip_level_size //
             );
 
-            mip_level_size.width  = ceil(mip_level_size.width / 2.0f);
-            mip_level_size.height = ceil(mip_level_size.height / 2.0f);
+            // Turns out wgpu uses floor not ceil to determine mip size
+            // mip_level_size.width  = ceil(mip_level_size.width / 2.0f);
+            // mip_level_size.height = ceil(mip_level_size.height / 2.0f);
+            mip_level_size.width  = floor(mip_level_size.width / 2.0f);
+            mip_level_size.height = floor(mip_level_size.height / 2.0f);
         }
     }
 
