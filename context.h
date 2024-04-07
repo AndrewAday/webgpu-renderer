@@ -1,6 +1,6 @@
 #pragma once
 
-#include <glfw3webgpu.h>
+#include <glfw3webgpu/glfw3webgpu.h>
 #include <webgpu/webgpu.h>
 
 #include "common.h"

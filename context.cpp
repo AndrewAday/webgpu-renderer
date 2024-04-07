@@ -144,7 +144,7 @@ static bool createSwapChain(GraphicsContext* context, u32 width, u32 height)
         context->swapChainFormat,          // format
         width,                             // width
         height,                            // height
-        WGPUPresentMode_Fifo,              // presentMode
+        WGPUPresentMode_Fifo,              // presentMode (vsynced)
     };
     context->swapChain = wgpuDeviceCreateSwapChain(
       context->device, context->surface, &swap_chain_desc);
@@ -211,6 +211,8 @@ static void createDepthTexture(GraphicsContext* context, u32 width, u32 height)
 
 bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
 {
+    ASSERT(context->instance == NULL);
+
     WGPUInstanceDescriptor instanceDesc = {};
     context->instance                   = wgpuCreateInstance(&instanceDesc);
     if (!context->instance) return false;
@@ -334,16 +336,16 @@ void GraphicsContext::resize(GraphicsContext* ctx, u32 width, u32 height)
 
 void GraphicsContext::release(GraphicsContext* ctx)
 {
-    wgpuSwapChainRelease(ctx->swapChain);
-    wgpuDeviceRelease(ctx->device);
-    wgpuSurfaceRelease(ctx->surface);
-    wgpuAdapterRelease(ctx->adapter);
-    wgpuInstanceRelease(ctx->instance);
-
     // textures
     wgpuTextureViewRelease(ctx->depthTextureView);
     wgpuTextureDestroy(ctx->depthTexture);
     wgpuTextureRelease(ctx->depthTexture);
+
+    wgpuSwapChainRelease(ctx->swapChain);
+    wgpuDeviceRelease(ctx->device);
+    wgpuAdapterRelease(ctx->adapter);
+    wgpuInstanceRelease(ctx->instance);
+    wgpuSurfaceRelease(ctx->surface);
 }
 
 void VertexBuffer::init(GraphicsContext* ctx, VertexBuffer* buf,

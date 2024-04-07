@@ -12,9 +12,17 @@ set(
     core/log.h core/log.c
 )
 
+set(
+    EXAMPLES
+    examples/example.h
+    examples/basic.cpp
+    examples/obj.cpp
+)
+
 add_executable(${CMAKE_PROJECT_NAME} 
     main.cpp
     common.h
+    runner.h runner.cpp
     implementations.cpp
     memory.h memory.cpp
     context.h context.cpp
@@ -22,6 +30,7 @@ add_executable(${CMAKE_PROJECT_NAME}
     entity.h entity.cpp
     shaders.h
     ${CORE}
+    ${EXAMPLES}
 )
 
 # Defines
