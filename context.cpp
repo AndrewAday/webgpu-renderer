@@ -1,5 +1,9 @@
 #include <iostream>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "core/log.h"
 #include "memory.h"
 #include "stb/stb_image.h"
@@ -74,7 +78,10 @@ static WGPUAdapter request_adapter(WGPUInstance instance,
     wgpuInstanceRequestAdapter(instance /* equivalent of navigator.gpu */,
                                options, onAdapterRequestEnded,
                                (void*)&userData);
-
+#ifdef __EMSCRIPTEN__
+    // In the Emscripten environment, the WebGPU adapter request is asynchronous
+    while (!userData.requestEnded) emscripten_sleep(10);
+#endif
     // In theory we should wait until onAdapterReady has been called, which
     // could take some time (what the 'await' keyword does in the JavaScript
     // code). In practice, we know that when the wgpuInstanceRequestAdapter()
@@ -115,6 +122,10 @@ static WGPUDevice request_device(WGPUAdapter adapter,
 
     wgpuAdapterRequestDevice(adapter, descriptor, onDeviceRequestEnded,
                              (void*)&userData);
+
+#ifdef __EMSCRIPTEN__
+    while (!userData.requestEnded) emscripten_sleep(10);
+#endif
 
     assert(userData.requestEnded);
 
@@ -199,36 +210,52 @@ static void createDepthTexture(GraphicsContext* context, u32 width, u32 height)
 
     // Stencil setup, mandatory but unused
     context->depthStencilAttachment.stencilClearValue = 0;
-#ifdef WEBGPU_BACKEND_WGPU
-    context->depthStencilAttachment.stencilLoadOp  = WGPULoadOp_Clear;
-    context->depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Store;
-#else
+#ifdef WEBGPU_BACKEND_DAWN
     context->depthStencilAttachment.stencilLoadOp  = WGPULoadOp_Undefined;
     context->depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Undefined;
+#else
+    context->depthStencilAttachment.stencilLoadOp  = WGPULoadOp_Clear;
+    context->depthStencilAttachment.stencilStoreOp = WGPUStoreOp_Store;
 #endif
     context->depthStencilAttachment.stencilReadOnly = false;
 }
 
 bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
 {
+    log_debug("initializing WebGPU context");
     ASSERT(context->instance == NULL);
 
+#ifdef __EMSCRIPTEN__
+    // See
+    // https://github.com/emscripten-core/emscripten/blob/main/system/lib/webgpu/webgpu.cpp#L22
+    // instance descriptor not implemented yet (as of 4/8/2024)
+    // must pass nullptr instead
+    context->instance = wgpuCreateInstance(NULL);
+#else
     WGPUInstanceDescriptor instanceDesc = {};
     context->instance                   = wgpuCreateInstance(&instanceDesc);
+#endif
     if (!context->instance) return false;
+
+    log_debug("WebGPU instance created");
 
     context->surface = glfwGetWGPUSurface(context->instance, window);
     if (!context->surface) return false;
     // context->window = window;
+    log_debug("WebGPU surface created");
 
-    WGPURequestAdapterOptions adapterOpts = {
-        NULL,                                // nextInChain
-        context->surface,                    // compatibleSurface
-        WGPUPowerPreference_HighPerformance, // powerPreference
-        false                                // force fallback adapter
-    };
+    WGPURequestAdapterOptions adapterOpts = {};
+    adapterOpts.compatibleSurface         = context->surface;
+    adapterOpts.powerPreference           = WGPUPowerPreference_HighPerformance;
+    // NULL,                                // nextInChain
+    // context->surface,                    // compatibleSurface
+    // WGPUPowerPreference_HighPerformance, // powerPreference
+    // false                                // force fallback adapter
     context->adapter = request_adapter(context->instance, &adapterOpts);
-    if (!context->adapter) return false;
+    if (!context->adapter) {
+        log_error("request adapter failed");
+        return false;
+    }
 
     // TODO add device feature limits
     // simple: inspect adapter max limits and request max
@@ -263,7 +290,11 @@ bool GraphicsContext::init(GraphicsContext* context, GLFWwindow* window)
     createDepthTexture(context, window_width, window_height);
 
     // defaults for render pass color attachment
-    context->colorAttachment            = {};
+    context->colorAttachment = {};
+
+#ifdef __EMSCRIPTEN__
+    context->colorAttachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+#endif
     context->colorAttachment.loadOp     = WGPULoadOp_Clear;
     context->colorAttachment.storeOp    = WGPUStoreOp_Store;
     context->colorAttachment.clearValue = WGPUColor{ 0.0f, 0.0f, 0.0f, 1.0f };
@@ -314,7 +345,9 @@ void GraphicsContext::presentFrame(GraphicsContext* ctx)
     wgpuCommandBufferRelease(command);
 
     // present
+#ifndef __EMSCRIPTEN__
     wgpuSwapChainPresent(ctx->swapChain);
+#endif
 }
 
 void GraphicsContext::resize(GraphicsContext* ctx, u32 width, u32 height)
@@ -774,18 +807,17 @@ void MipMapGenerator::init(GraphicsContext* ctx, MipMapGenerator* generator)
     generator->ctx = ctx;
 
     // Create sampler
-    WGPUSamplerDescriptor sampler_desc = {
-        .label         = "mip map sampler",
-        .addressModeU  = WGPUAddressMode_ClampToEdge,
-        .addressModeV  = WGPUAddressMode_ClampToEdge,
-        .addressModeW  = WGPUAddressMode_ClampToEdge,
-        .minFilter     = WGPUFilterMode_Linear,
-        .magFilter     = WGPUFilterMode_Nearest,
-        .mipmapFilter  = WGPUMipmapFilterMode_Nearest,
-        .lodMinClamp   = 0.0f,
-        .lodMaxClamp   = 1.0f,
-        .maxAnisotropy = 1,
-    };
+    WGPUSamplerDescriptor sampler_desc = {};
+    sampler_desc.label                 = "mip map sampler";
+    sampler_desc.addressModeU          = WGPUAddressMode_ClampToEdge;
+    sampler_desc.addressModeV          = WGPUAddressMode_ClampToEdge;
+    sampler_desc.addressModeW          = WGPUAddressMode_ClampToEdge;
+    sampler_desc.minFilter             = WGPUFilterMode_Linear;
+    sampler_desc.magFilter             = WGPUFilterMode_Nearest;
+    sampler_desc.mipmapFilter          = WGPUMipmapFilterMode_Nearest;
+    sampler_desc.lodMinClamp           = 0.0f;
+    sampler_desc.lodMaxClamp           = 1.0f;
+    sampler_desc.maxAnisotropy         = 1;
     generator->sampler = wgpuDeviceCreateSampler(ctx->device, &sampler_desc);
 }
 
@@ -990,16 +1022,22 @@ WGPUTexture MipMapGenerator::generate(MipMapGenerator* generator,
 
             views[target_mip] = wgpuTextureCreateView(mip_texture, &viewDesc);
 
-            WGPURenderPassColorAttachment color_attachment_desc = {};
-            color_attachment_desc.view          = views[target_mip];
-            color_attachment_desc.resolveTarget = NULL;
-            color_attachment_desc.loadOp        = WGPULoadOp_Clear;
-            color_attachment_desc.storeOp       = WGPUStoreOp_Store;
-            color_attachment_desc.clearValue    = { 0.0f, 0.0f, 0.0f, 0.0f };
+            WGPURenderPassColorAttachment colorAttachmentDesc = {};
+            colorAttachmentDesc.view = views[target_mip];
+#ifdef __EMSCRIPTEN__
+            // depthSlice is new in the new header, not yet supported in
+            // wgpu-native. See
+            // https://github.com/eliemichel/WebGPU-distribution/issues/14
+            colorAttachmentDesc.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
+#endif
+            colorAttachmentDesc.resolveTarget = NULL;
+            colorAttachmentDesc.loadOp        = WGPULoadOp_Clear;
+            colorAttachmentDesc.storeOp       = WGPUStoreOp_Store;
+            colorAttachmentDesc.clearValue    = { 0.0f, 0.0f, 0.0f, 0.0f };
 
             WGPURenderPassDescriptor render_pass_desc = {};
             render_pass_desc.colorAttachmentCount     = 1;
-            render_pass_desc.colorAttachments         = &color_attachment_desc;
+            render_pass_desc.colorAttachments         = &colorAttachmentDesc;
             render_pass_desc.depthStencilAttachment   = NULL;
 
             WGPURenderPassEncoder pass_encoder
@@ -1124,6 +1162,7 @@ void Texture::initFromFile(GraphicsContext* ctx, Texture* texture,
 
     if (pixel_data == NULL) {
         log_error("Couldn't load '%s'\n", filename);
+
         log_error("Reason: %s\n", stbi_failure_reason());
         return;
     } else {

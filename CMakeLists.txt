@@ -66,7 +66,9 @@ if(XCODE)
 endif()
 
 # vendor dependencies
-add_subdirectory(vendor/glfw)
+if (NOT EMSCRIPTEN)
+    add_subdirectory(vendor/glfw)
+endif()
 add_subdirectory(vendor/glfw3webgpu)
 
 if (MSVC)
@@ -89,6 +91,7 @@ endif (MSVC)
 # print which backend is being used
 message(STATUS "Using WebGPU backend: ${WEBGPU_BACKEND}")
 
+# TODO: host our own distribution on CCRMA
 FetchContent_Declare(
   webgpu
   GIT_REPOSITORY https://github.com/eliemichel/WebGPU-distribution
@@ -96,7 +99,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(webgpu)
 
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE glfw webgpu glfw3webgpu)
+# linking
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE webgpu glfw glfw3webgpu)
+
 
 # add vendor to include path
 target_include_directories(${CMAKE_PROJECT_NAME} 
@@ -105,3 +110,40 @@ target_include_directories(${CMAKE_PROJECT_NAME}
 )
 
 target_copy_webgpu_binaries(${CMAKE_PROJECT_NAME})
+
+# emscripten specific options
+if (EMSCRIPTEN)
+    # know to rebuild when assets/ directory changes
+    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+
+    # Make sure to re-link when the shell file changes
+    # set(SHELL_FILE shell_minimal.html)
+    # set_property(
+    #     TARGET ${CMAKE_PROJECT_NAME}
+    #     PROPERTY LINK_DEPENDS
+    #     "${CMAKE_CURRENT_SOURCE_DIR}/${SHELL_FILE}"
+    # )
+
+
+    # Add Emscripten-specific link options
+    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+        -sUSE_GLFW=3 # Use Emscripten-provided GLFW
+        -sUSE_WEBGPU # Handle WebGPU symbols
+        -sASYNCIFY # Required for emscripten_sleep in the async wgpu adapter and device request
+        -sALLOW_MEMORY_GROWTH # allow memory to grow dynamically
+
+        # uncomment to include local files in the build
+        # https://emscripten.org/docs/porting/files/packaging_files.html
+        # https://emscripten.org/docs/getting_started/Tutorial.html#tutorial-files
+        # To include files outside of the current working directory
+        # use the `--preload-file srcpath@dstpath` syntax to explicitly 
+        # specify the target location
+        --preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets@./assets
+
+        # Can specify custom html template
+        # https://github.com/emscripten-core/emscripten/blob/main/src/shell_minimal.html
+        # --shell-file "${CMAKE_CURRENT_SOURCE_DIR}/${SHELL_FILE}"
+    )
+    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES SUFFIX ".html")
+
+endif()

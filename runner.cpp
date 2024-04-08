@@ -6,6 +6,10 @@
 
 #include <glm/glm.hpp>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#endif
+
 // project includes
 #include "common.h"
 #include "core/log.h"
@@ -57,20 +61,11 @@ static void onWindowResize(GLFWwindow* window, int width, int height)
 static void mouseButtonCallback(GLFWwindow* window, int button, int action,
                                 int mods)
 {
+    log_debug("mouse button callback");
     ExampleRunner* runner = (ExampleRunner*)glfwGetWindowUserPointer(window);
     if (runner->callbacks.onMouseButton) {
         runner->callbacks.onMouseButton(button, action, mods);
     }
-
-    // UNUSED_VAR(mods);
-    // UNUSED_VAR(window);
-    // if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-    //     // double xpos, ypos;
-    //     // glfwGetCursorPos(window, &xpos, &ypos);
-    //     mouseDown = true;
-    // } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
-    //     mouseDown = false;
-    // }
 }
 
 static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
@@ -79,10 +74,6 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     if (runner->callbacks.onScroll) {
         runner->callbacks.onScroll(xoffset, yoffset);
     }
-    // UNUSED_VAR(window);
-    // std::cout << "Scroll: " << xoffset << ", " << yoffset << std::endl;
-    // // yoffset changes the orbit camera radius
-    // cameraSpherical.radius -= yoffset;
 }
 
 static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
@@ -91,19 +82,6 @@ static void cursorPositionCallback(GLFWwindow* window, double xpos, double ypos)
     if (runner->callbacks.onCursorPosition) {
         runner->callbacks.onCursorPosition(xpos, ypos);
     }
-
-    // f64 deltaX = xpos - mouseX;
-    // f64 deltaY = ypos - mouseY;
-
-    // const f64 speed = 0.02;
-
-    // if (mouseDown) {
-    //     cameraSpherical.theta -= (speed * deltaX);
-    //     cameraSpherical.phi -= (speed * deltaY);
-    // }
-
-    // mouseX = xpos;
-    // mouseY = ypos;
 }
 
 // struct KeyState {
@@ -124,20 +102,6 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action,
     if (runner->callbacks.onKey) {
         runner->callbacks.onKey(key, scancode, action, mods);
     }
-
-    // if (action == GLFW_PRESS) {
-    //     keyStates[key] = true;
-    // } else if (action == GLFW_RELEASE) {
-    //     keyStates[key] = false;
-    // }
-
-    // // camera controls
-    // if (keyStates[GLFW_KEY_W]) arcOrigin.z -= 0.1f;
-    // if (keyStates[GLFW_KEY_S]) arcOrigin.z += 0.1f;
-    // if (keyStates[GLFW_KEY_A]) arcOrigin.x -= 0.1f;
-    // if (keyStates[GLFW_KEY_D]) arcOrigin.x += 0.1f;
-    // if (keyStates[GLFW_KEY_Q]) arcOrigin.y += 0.1f;
-    // if (keyStates[GLFW_KEY_E]) arcOrigin.y -= 0.1f;
 }
 
 // ============================================================================
@@ -208,43 +172,60 @@ bool ExampleRunner::init(ExampleRunner* runner)
     return true;
 }
 
+static void mainLoop(ExampleRunner* runner)
+{
+    bool update = runner->callbacks.onUpdate != NULL;
+    bool render = runner->callbacks.onRender != NULL;
+
+    // handle input -------------------
+    glfwPollEvents();
+
+    // update --------------------------------
+    if (update) runner->callbacks.onUpdate(1.0f / 60.0f);
+
+    // render --------------------------------
+    if (render) runner->callbacks.onRender();
+
+    // frame metrics ----------------------------
+    runner->fc++;
+    showFPS(runner->window);
+}
+
 void ExampleRunner::run(ExampleRunner* runner)
 {
     // always run basic for now
-    ExampleEntryPoint entryPoint = examples[0].entryPoint;
+    ExampleEntryPoint entryPoint = examples[1].entryPoint;
     entryPoint(&runner->callbacks); // populate callbacks
 
     GraphicsContext* gctx       = &runner->gctx;
     ExampleCallbacks* callbacks = &runner->callbacks;
-    bool update                 = callbacks->onUpdate != NULL;
-    bool render                 = callbacks->onRender != NULL;
 
     // init example
     if (callbacks->onInit) callbacks->onInit(gctx, runner->window);
 
     runner->fc = 0;
-    while (!glfwWindowShouldClose(runner->window)) {
-        runner->fc++;
 
-        // handle input -------------------
-        glfwPollEvents();
+#ifdef __EMSCRIPTEN__
+    // https://emscripten.org/docs/api_reference/emscripten.h.html#c.emscripten_set_main_loop_arg
+    // can't have an infinite loop in emscripten
+    // instead pass a callback to emscripten_set_main_loop_arg
+    emscripten_set_main_loop_arg(
+      [](void* runner) {
+          mainLoop((ExampleRunner*)runner);
+          // if (glfwWindowShouldClose(runner->window)) {
+          //     if (runner->callbacks.onExit) runner->callbacks.onExit();
+          //     emscripten_cancel_main_loop(); // unregister the main loop
+          // }
+      },
+      runner, // user data (void *)
+      -1,     // FPS (negative means use browser's requestAnimationFrame)
+      true    // simulate infinite loop (prevents code after this from exiting)
+    );
+#else
+    while (!glfwWindowShouldClose(runner->window)) mainLoop(runner);
+#endif
 
-        // update --------------------------------
-        if (update)
-            callbacks->onUpdate(1.0f / 60.0f);
-        else {
-            // breakpoint
-            log_trace("No update callback");
-        }
-
-        // render --------------------------------
-        if (render) callbacks->onRender();
-
-        // frame metrics ----------------------------
-        showFPS(runner->window);
-    }
-
-    // cleanup example
+    // cleanup
     if (callbacks->onExit) callbacks->onExit();
 }
 

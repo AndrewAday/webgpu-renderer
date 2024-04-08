@@ -1,12 +1,44 @@
 #include <fast_obj/fast_obj.h>
 
+#include <GLFW/glfw3.h>
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
+#include <glm/gtx/quaternion.hpp> // quatToMat4
+
 #include "context.h"
 #include "core/log.h"
 #include "entity.h"
 #include "example.h"
 #include "shaders.h"
 
-#include <GLFW/glfw3.h>
+// arc camera impl with velocity / dampening
+// https://webgpu.github.io/webgpu-samples/?sample=cameras#camera.ts
+// Original Arcball camera paper?
+// https://www.talisman.org/~erlkonig/misc/shoemake92-arcball.pdf
+
+struct Spherical {
+    f32 radius;
+    f32 theta; // polar (radians)
+    f32 phi;   // azimuth (radians)
+
+    // Left handed system
+    // (1, 0, 0) maps to cartesion coordinate (0, 0, 1)
+    static glm::vec3 toCartesian(Spherical s)
+    {
+        f32 v = s.radius * cos(s.phi);
+        return glm::vec3(v * sin(s.theta),      // x
+                         s.radius * sin(s.phi), // y
+                         v * cos(s.theta)       // z
+        );
+    }
+};
+
+static glm::vec3 arcOrigin = glm::vec3(0.0f); // origin of the arcball camera
+static Spherical cameraSpherical = { 6.0f, 0.0f, 0.0f };
+static bool mouseDown            = false;
+static f64 mouseX                = 0.0;
+static f64 mouseY                = 0.0;
 
 static GraphicsContext* gctx = NULL;
 static GLFWwindow* window    = NULL;
@@ -17,6 +49,48 @@ static Entity objEntity        = {};
 static Entity* renderables[1]  = { &objEntity };
 static Texture texture         = {};
 static Material material       = {};
+
+typedef void (*Example_OnMouseButton)(i32 button, i32 action, i32 mods);
+typedef void (*Example_OnScroll)(f64 xoffset, f64 yoffset);
+typedef void (*Example_OnCursorPosition)(f64 xpos, f64 ypos);
+typedef void (*Example_OnKey)(i32 key, i32 scancode, i32 action, i32 mods);
+
+static void onMouseButton(i32 button, i32 action, i32 mods)
+{
+    UNUSED_VAR(mods);
+
+    log_debug("obj mouse button callback");
+
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+        // double xpos, ypos;
+        // glfwGetCursorPos(window, &xpos, &ypos);
+        mouseDown = true;
+    } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+        mouseDown = false;
+    }
+}
+
+static void onScroll(f64 xoffset, f64 yoffset)
+{
+    UNUSED_VAR(xoffset);
+    cameraSpherical.radius -= yoffset;
+}
+
+static void onCursorPosition(f64 xpos, f64 ypos)
+{
+    f64 deltaX = xpos - mouseX;
+    f64 deltaY = ypos - mouseY;
+
+    const f64 speed = 0.02;
+
+    if (mouseDown) {
+        cameraSpherical.theta -= (speed * deltaX);
+        cameraSpherical.phi -= (speed * deltaY);
+    }
+
+    mouseX = xpos;
+    mouseY = ypos;
+}
 
 static void onInit(GraphicsContext* ctx, GLFWwindow* w)
 {
@@ -32,14 +106,14 @@ static void onInit(GraphicsContext* ctx, GLFWwindow* w)
     Entity::init(&objEntity, gctx, pipeline.bindGroupLayouts[PER_DRAW_GROUP]);
 
     Texture::initFromFile(gctx, &texture,
-                          "assets/fourareen/fourareen2K_albedo.jpg", true);
+                          "./assets/fourareen/fourareen2K_albedo.jpg", true);
 
     Material::init(gctx, &material, &pipeline, &texture);
 
     { // load obj
         // fastObjMesh* mesh = fast_obj_read("assets/suzanne.obj");
         // fastObjMesh* mesh = fast_obj_read("assets/cube.obj");
-        fastObjMesh* mesh = fast_obj_read("assets/fourareen/fourareen.obj");
+        fastObjMesh* mesh = fast_obj_read("./assets/fourareen/fourareen.obj");
         // print mesh data
         printf(
           "Loaded mesh\n"
@@ -89,6 +163,13 @@ static void onUpdate(f32 dt)
     UNUSED_VAR(dt);
     // std::cout << "basic example onUpdate" << std::endl;
     Entity::rotateOnLocalAxis(&objEntity, glm::vec3(0.0, 1.0, 0.0), -0.01f);
+
+    { // update camera
+        cameraEntity.pos = arcOrigin + Spherical::toCartesian(cameraSpherical);
+        // camera lookat arcball origin
+        cameraEntity.rot = glm::conjugate(
+          glm::toQuat(glm::lookAt(cameraEntity.pos, arcOrigin, VEC_UP)));
+    }
 }
 
 static void onRender()
@@ -200,4 +281,8 @@ void Example_Obj(ExampleCallbacks* callbacks)
     callbacks->onUpdate = onUpdate;
     callbacks->onRender = onRender;
     callbacks->onExit   = onExit;
+    // input callbacks
+    callbacks->onMouseButton    = onMouseButton;
+    callbacks->onScroll         = onScroll;
+    callbacks->onCursorPosition = onCursorPosition;
 }
