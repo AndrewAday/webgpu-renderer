@@ -40,7 +40,3 @@ build-*/
 
 # DS_Store
 .DS_Store
-
-# asset files
-assets/
-
