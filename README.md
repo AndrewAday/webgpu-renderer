@@ -1,5 +1,19 @@
 # WebGPU-Renderer
 
+## Building Natively
+
+### Windows
+
+```bash
+# Debug
+cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+# Release
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+# To build, use build/WebGPU-Renderer.sln
+```
+
 ## Building for Web
 
 Requires Chrome browser 113 or greater. Make sure hardware acceleration is enabled.

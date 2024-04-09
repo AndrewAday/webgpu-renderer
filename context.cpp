@@ -1011,16 +1011,16 @@ WGPUTexture MipMapGenerator::generate(MipMapGenerator* generator,
         for (u32 i = 1; i < texture_desc->mipLevelCount; ++i) {
             const uint32_t target_mip = view_index + i;
 
-            WGPUTextureViewDescriptor viewDesc = {};
-            viewDesc.label                     = "dst_view";
-            viewDesc.aspect                    = WGPUTextureAspect_All;
-            viewDesc.baseMipLevel              = dst_mip_level++;
-            viewDesc.mipLevelCount             = 1;
-            viewDesc.dimension                 = WGPUTextureViewDimension_2D;
-            viewDesc.baseArrayLayer            = array_layer;
-            viewDesc.arrayLayerCount           = 1;
+            WGPUTextureViewDescriptor mipViewDesc = {};
+            mipViewDesc.label                     = "dst_view";
+            mipViewDesc.aspect                    = WGPUTextureAspect_All;
+            mipViewDesc.baseMipLevel              = dst_mip_level++;
+            mipViewDesc.mipLevelCount             = 1;
+            mipViewDesc.dimension                 = WGPUTextureViewDimension_2D;
+            mipViewDesc.baseArrayLayer            = array_layer;
+            mipViewDesc.arrayLayerCount           = 1;
 
-            views[target_mip] = wgpuTextureCreateView(mip_texture, &viewDesc);
+            views[target_mip] = wgpuTextureCreateView(mip_texture, &mipViewDesc);
 
             WGPURenderPassColorAttachment colorAttachmentDesc = {};
             colorAttachmentDesc.view = views[target_mip];
