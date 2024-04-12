@@ -59,11 +59,40 @@ else()
     target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Wall -Wextra -pedantic)
 endif()
 
+# Windows warnings
+if (MSVC)
+	# Ignore a warning that GLM requires to bypass
+	# Disable warning C4201: nonstandard extension used: nameless struct/union
+	target_compile_options(${CMAKE_PROJECT_NAME} PUBLIC /wd4201)
+
+    # Required for GLM lookat()
+    # Disable warning C4127: conditional expression is constant
+    target_compile_options(${CMAKE_PROJECT_NAME} PUBLIC /wd4127)
+
+	# Disable warning C4305: truncation from 'int' to 'bool' in 'if' condition
+	target_compile_options(${CMAKE_PROJECT_NAME} PUBLIC /wd4305)
+
+	# Ignore a warning that stb_image requires to bypass
+	# Disable warning C4244: conversion from 'int' to 'short', possible loss of data
+	target_compile_options(${CMAKE_PROJECT_NAME} PUBLIC /wd4244)
+
+    # ignore fopen warning for cgltf
+	target_compile_options(${CMAKE_PROJECT_NAME} PUBLIC /wd4996)
+endif (MSVC)
+
 if(XCODE)
     set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
         XCODE_GENERATE_SCHEME ON
         XCODE_SCHEME_ENABLE_GPU_FRAME_CAPTURE_MODE "Metal")
 endif()
+
+# debugging setup for visual studio
+if ( MSVC )
+    set_target_properties( ${CMAKE_PROJECT_NAME} PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+endif()
+
 
 # vendor dependencies
 if (NOT EMSCRIPTEN)

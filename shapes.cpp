@@ -311,7 +311,7 @@ Vertices createCube(const CubeParams* params)
       params->widthSeg, params->heightSeg, &vertices, &indices, numVertices);
 
     Vertices v = {};
-    Vertices::copy(&v, vertices.data(), vertices.size(), indices.data(),
-                   indices.size());
+    Vertices::copy(&v, vertices.data(), (u32) vertices.size(), indices.data(),
+                   (u32) indices.size());
     return v;
 }
