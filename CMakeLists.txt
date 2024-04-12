@@ -71,13 +71,8 @@ if (NOT EMSCRIPTEN)
 endif()
 add_subdirectory(vendor/glfw3webgpu)
 
-if (MSVC)
-    # Dawn doesn't build on windows, use webgpu-native precompiled binaries
-    set(WEBGPU_BACKEND "WGPU" CACHE STRING "Backend implementation of WebGPU. Possible values are WGPU and DAWN (it does not matter when using emcmake)")
-else()
-    # default to DAWN for source code and better error msgs
-    set(WEBGPU_BACKEND "DAWN" CACHE STRING "Backend implementation of WebGPU. Possible values are WGPU and DAWN (it does not matter when using emcmake)")
-endif()
+# force use webgpu
+set(WEBGPU_BACKEND "WGPU" CACHE STRING "Backend implementation of WebGPU. Possible values are WGPU and DAWN (it does not matter when using emcmake)")
 
 # Ignore a warning that GLM requires to bypass
 if (MSVC)
