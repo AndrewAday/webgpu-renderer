@@ -8,6 +8,9 @@ struct Vertex {
     f32 nx, ny, nz; // normal
     f32 u, v;       // uv
 
+    // TODO: static assert offsets match the strides
+    // use these offsets to calculate strides when creating vertex buffers
+
     static void pos(Vertex* v, char c, f32 val);
     static void norm(Vertex* v, char c, f32 val);
 };
